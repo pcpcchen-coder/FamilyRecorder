@@ -93,7 +93,10 @@ class AudioRecorder:
             device=self.device.index,
             channels=requested_channels,
             dtype="int16",
-            blocksize=max(1, self.capture_sample_rate),
+            # Let PortAudio choose the native block size. A fixed one-second
+            # block doubles wall-clock capture time and overflows on the
+            # reSpeaker XVF3800/CoreAudio combination.
+            blocksize=0,
         ) as stream:
             yield stream
 

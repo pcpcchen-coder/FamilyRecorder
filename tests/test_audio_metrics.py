@@ -3,8 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from family_recorder.audio import downmix_pcm16, resample_pcm16, write_wav
-from family_recorder.config import VadConfig
+from family_recorder.audio import AudioRecorder, downmix_pcm16, resample_pcm16, write_wav
+from family_recorder.config import AudioConfig, VadConfig
 from family_recorder.metrics import analyze_audio, rms_dbfs
 
 
@@ -15,6 +15,37 @@ class AlternatingVad:
     def is_speech(self, _frame: bytes, _sample_rate: int) -> bool:
         self.calls += 1
         return self.calls % 2 == 1
+
+
+class FakeSoundDevice:
+    default = type("Default", (), {"device": (0, None)})()
+
+    def __init__(self) -> None:
+        self.stream_options: dict[str, object] = {}
+
+    @staticmethod
+    def query_devices() -> list[dict[str, object]]:
+        return [
+            {
+                "name": "reSpeaker XVF3800 4-Mic Array",
+                "max_input_channels": 2,
+                "default_samplerate": 16_000,
+            }
+        ]
+
+    @staticmethod
+    def check_input_settings(**_options: object) -> None:
+        return None
+
+    def RawInputStream(self, **options: object) -> "FakeSoundDevice":  # noqa: N802
+        self.stream_options = options
+        return self
+
+    def __enter__(self) -> "FakeSoundDevice":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
 
 
 def _tone(sample_rate: int, seconds: float, amplitude: int = 10_000) -> bytes:
@@ -42,6 +73,16 @@ def test_write_wav_is_whisper_compatible(tmp_path: Path) -> None:
         assert audio.getnchannels() == 1
         assert audio.getsampwidth() == 2
         assert audio.getframerate() == 16_000
+
+
+def test_recorder_uses_portaudio_native_block_size() -> None:
+    sounddevice = FakeSoundDevice()
+    recorder = AudioRecorder(AudioConfig(), sd_module=sounddevice)
+
+    with recorder.open_stream():
+        pass
+
+    assert sounddevice.stream_options["blocksize"] == 0
 
 
 def test_analysis_combines_rms_and_vad() -> None:
