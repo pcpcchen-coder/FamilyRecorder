@@ -11,8 +11,8 @@ class ConfigEditError(RuntimeError):
     """Raised when a targeted YAML setting cannot be updated safely."""
 
 
-def update_yaml_scalar(path: Path, section: str, key: str, value: str) -> None:
-    """Update one two-space-indented YAML scalar while preserving all other text."""
+def update_yaml_value(path: Path, section: str, key: str, value: object) -> None:
+    """Update one two-space-indented YAML value while preserving all other text."""
     original = path.read_text(encoding="utf-8")
     lines = original.splitlines(keepends=True)
     section_pattern = re.compile(rf"^{re.escape(section)}:\s*(?:#.*)?(?:\r?\n)?$")
@@ -22,7 +22,14 @@ def update_yaml_scalar(path: Path, section: str, key: str, value: str) -> None:
         None,
     )
     if section_index is None:
-        raise ConfigEditError(f"Config section {section!r} was not found in {path}")
+        newline = "\r\n" if "\r\n" in original else "\n"
+        separator = "" if not original or original.endswith(("\n", "\r")) else newline
+        updated = (
+            f"{original}{separator}{newline if original else ''}{section}:{newline}"
+            f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
+        )
+        _atomic_replace(path, updated)
+        return
 
     end_index = len(lines)
     for index in range(section_index + 1, len(lines)):
@@ -35,11 +42,17 @@ def update_yaml_scalar(path: Path, section: str, key: str, value: str) -> None:
         None,
     )
     if key_index is None:
-        raise ConfigEditError(f"Config key {section}.{key} was not found in {path}")
+        newline = "\r\n" if "\r\n" in original else "\n"
+        lines.insert(end_index, f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}")
+        _atomic_replace(path, "".join(lines))
+        return
 
     newline = "\r\n" if lines[key_index].endswith("\r\n") else "\n"
     lines[key_index] = f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
-    updated = "".join(lines)
+    _atomic_replace(path, "".join(lines))
+
+
+def _atomic_replace(path: Path, updated: str) -> None:
     mode = path.stat().st_mode & 0o777
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
     try:
@@ -49,3 +62,7 @@ def update_yaml_scalar(path: Path, section: str, key: str, value: str) -> None:
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def update_yaml_scalar(path: Path, section: str, key: str, value: str) -> None:
+    update_yaml_value(path, section, key, value)

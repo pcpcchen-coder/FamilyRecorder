@@ -48,6 +48,15 @@ class StorageConfig:
     delete_audio_after_transcription: bool = False
 
 
+@dataclass(frozen=True)
+class SpeakerConfig:
+    enabled: bool = False
+    members: tuple[str, ...] = ()
+    min_similarity: float = 0.82
+    min_margin: float = 0.025
+    dominance_threshold: float = 0.65
+
+
 DEFAULT_SUMMARY_PROMPT = """\
 你是家庭聲音日誌整理助手。只根據逐字稿內容整理，不得補造事件。
 輸出繁體中文 Markdown，列出重要消息、決策、待辦、想法、關鍵實體、
@@ -80,6 +89,7 @@ class AppConfig:
     vad: VadConfig = field(default_factory=VadConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    speakers: SpeakerConfig = field(default_factory=SpeakerConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     placement_test: PlacementTestConfig = field(default_factory=PlacementTestConfig)
 
@@ -131,6 +141,14 @@ def load_config(path: str | Path) -> AppConfig:
     storage_values["data_dir"] = _path(storage_values.get("data_dir", StorageConfig().data_dir))
     storage = StorageConfig(**storage_values)
 
+    speaker_values = _known_values(SpeakerConfig, raw.get("speakers", {}))
+    if "members" in speaker_values:
+        members = speaker_values["members"]
+        if not isinstance(members, list):
+            raise ValueError("speakers.members must be a YAML list")
+        speaker_values["members"] = tuple(str(value).strip() for value in members)
+    speakers = SpeakerConfig(**speaker_values)
+
     summary = SummaryConfig(**_known_values(SummaryConfig, raw.get("summary", {})))
 
     placement_values = _known_values(PlacementTestConfig, raw.get("placement_test", {}))
@@ -141,7 +159,15 @@ def load_config(path: str | Path) -> AppConfig:
         placement_values["sentences_file"] = None
     placement = PlacementTestConfig(**placement_values)
 
-    config = AppConfig(audio, vad, whisper, storage, summary, placement)
+    config = AppConfig(
+        audio=audio,
+        vad=vad,
+        whisper=whisper,
+        storage=storage,
+        speakers=speakers,
+        summary=summary,
+        placement_test=placement,
+    )
     validate_config(config)
     return config
 
@@ -161,6 +187,19 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("vad.min_speech_ratio must be between 0 and 1")
     if config.storage.keep_audio_days < 0:
         raise ValueError("storage.keep_audio_days cannot be negative")
+    if len(config.speakers.members) > 8:
+        raise ValueError("speakers.members supports at most 8 household members")
+    if any(not name or len(name) > 80 for name in config.speakers.members):
+        raise ValueError("speaker member names must contain 1 to 80 characters")
+    normalized_names = [name.casefold() for name in config.speakers.members]
+    if len(normalized_names) != len(set(normalized_names)):
+        raise ValueError("speakers.members cannot contain duplicate names")
+    if not 0 <= config.speakers.min_similarity <= 1:
+        raise ValueError("speakers.min_similarity must be between 0 and 1")
+    if not 0 <= config.speakers.min_margin <= 1:
+        raise ValueError("speakers.min_margin must be between 0 and 1")
+    if not 0.5 <= config.speakers.dominance_threshold <= 1:
+        raise ValueError("speakers.dominance_threshold must be between 0.5 and 1")
     if not 0 <= config.summary.hour <= 23 or not 0 <= config.summary.minute <= 59:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:

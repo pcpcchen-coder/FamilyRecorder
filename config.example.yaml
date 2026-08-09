@@ -30,6 +30,16 @@ storage:
   keep_audio_days: 7
   delete_audio_after_transcription: false
 
+# Optional, approximate household-speaker labels. Add names from the menu bar,
+# then let each person intentionally record a short enrollment sample. The
+# enrollment WAV is discarded; only a local acoustic feature profile is kept.
+speakers:
+  enabled: false
+  members: []
+  min_similarity: 0.82
+  min_margin: 0.025
+  dominance_threshold: 0.65
+
 summary:
   enabled: true
   # Uses the official Codex CLI and its saved "Sign in with ChatGPT" session.
@@ -56,7 +66,8 @@ summary:
     6. 可能辨識錯誤或需要人工確認的片段
     7. 100 字內今日摘要
 
-    不要輸出無關的閒聊流水帳，也不要推測說話者身分。
+    不要輸出無關的閒聊流水帳。逐字稿若含「可能：某人」標記，僅把它
+    視為本機近似辨識結果；不可把人別當成已確認事實。
 
 placement_test:
   recording_seconds_per_sentence: 8

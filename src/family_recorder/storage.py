@@ -8,6 +8,7 @@ from pathlib import Path
 from family_recorder.audio import AudioChunk
 from family_recorder.config import StorageConfig
 from family_recorder.metrics import AudioAnalysis
+from family_recorder.speakers import SpeakerIdentification
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS segments (
     speech_ratio REAL NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('transcribed', 'empty', 'failed')),
     error TEXT,
+    speaker_name TEXT,
+    speaker_confidence REAL,
+    speaker_status TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -62,6 +66,21 @@ class Storage:
         self.database_path = self.root / "listener.sqlite3"
         self.connection = sqlite3.connect(self.database_path)
         self.connection.executescript(SCHEMA)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(segments)").fetchall()
+        }
+        additions = {
+            "speaker_name": "TEXT",
+            "speaker_confidence": "REAL",
+            "speaker_status": "TEXT",
+        }
+        with self.connection:
+            for name, declaration in additions.items():
+                if name not in columns:
+                    self.connection.execute(f"ALTER TABLE segments ADD COLUMN {name} {declaration}")
 
     def close(self) -> None:
         self.connection.close()
@@ -91,6 +110,7 @@ class Storage:
         text: str,
         status: str = "transcribed",
         error: str | None = None,
+        speaker: SpeakerIdentification | None = None,
     ) -> int:
         if status == "transcribed" and text:
             transcript_path = self.transcript_path_for(chunk.started_at.date())
@@ -100,8 +120,19 @@ class Storage:
                     transcript.write(
                         f"# FamilyRecorder transcript — {chunk.started_at:%Y-%m-%d}\n\n"
                     )
+                speaker_label = ""
+                if speaker and speaker.status == "recognized" and speaker.label:
+                    confidence = (
+                        f"（{speaker.confidence:.0%}）" if speaker.confidence is not None else ""
+                    )
+                    speaker_label = f" — 可能：{speaker.label}{confidence}"
+                elif speaker and speaker.status == "mixed":
+                    speaker_label = " — 人別：可能多人"
+                elif speaker and speaker.status == "uncertain":
+                    speaker_label = " — 人別：不確定"
                 transcript.write(
-                    f"### {chunk.started_at:%H:%M:%S}–{chunk.ended_at:%H:%M:%S}\n\n{text}\n\n"
+                    f"### {chunk.started_at:%H:%M:%S}–{chunk.ended_at:%H:%M:%S}"
+                    f"{speaker_label}\n\n{text}\n\n"
                 )
 
         with self.connection:
@@ -109,8 +140,9 @@ class Storage:
                 """
                 INSERT INTO segments (
                     transcript_date, started_at, ended_at, audio_path, text,
-                    rms_dbfs, snr_db, speech_ratio, status, error, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rms_dbfs, snr_db, speech_ratio, status, error,
+                    speaker_name, speaker_confidence, speaker_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chunk.started_at.date().isoformat(),
@@ -123,6 +155,9 @@ class Storage:
                     analysis.speech_ratio,
                     status,
                     error,
+                    speaker.label if speaker else None,
+                    speaker.confidence if speaker else None,
+                    speaker.status if speaker else None,
                     datetime.now().astimezone().isoformat(),
                 ),
             )

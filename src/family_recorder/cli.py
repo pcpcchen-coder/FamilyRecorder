@@ -7,16 +7,18 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
 from family_recorder.config import AppConfig, load_config
-from family_recorder.config_editor import update_yaml_scalar
+from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
+from family_recorder.speakers import SpeakerProfileStore, create_profile
 from family_recorder.storage import Storage
 from family_recorder.summary import (
     DailySummaryRunner,
@@ -62,6 +64,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     summary_model.add_argument("--model", required=True)
     commands.add_parser("menu-status", help=argparse.SUPPRESS)
+
+    speakers = commands.add_parser(
+        "set-speakers", help="Set the known household members for approximate local labeling"
+    )
+    speakers.add_argument("--name", action="append", default=[])
+    enroll = commands.add_parser(
+        "enroll-speaker", help="Record a temporary sample and save only its local voice features"
+    )
+    enroll.add_argument("--name", required=True)
+    enroll.add_argument("--seconds", type=int, default=15)
+    enroll.add_argument("--delay", type=float, default=2.0)
+    delete_profile = commands.add_parser(
+        "delete-speaker-profile", help="Delete one locally stored voice feature profile"
+    )
+    delete_profile.add_argument("--name", required=True)
 
     placement = commands.add_parser("placement-test", help="Compare microphone positions")
     placement.add_argument("--positions", nargs="+", default=["A", "B", "C"])
@@ -126,6 +143,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
     model_paths = sorted(config.whisper.model_path.parent.glob("ggml-*.bin"))
     today = date.today()
     data_dir = config.storage.data_dir
+    profile_store = SpeakerProfileStore(data_dir)
     return {
         "paused": pause_state.paused,
         "pause_label": pause_state.label,
@@ -146,6 +164,9 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         ],
         "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
+        "speaker_enabled": config.speakers.enabled,
+        "speaker_members": profile_store.statuses(config.speakers.members),
+        "speaker_profiles_dir": str(profile_store.directory),
     }
 
 
@@ -198,6 +219,47 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "summary", "model", args.model.strip()
             )
             print(f"Summary model: {args.model.strip() or 'ChatGPT account default'}")
+            return 0
+        if args.command == "set-speakers":
+            members = tuple(name.strip() for name in args.name if name.strip())
+            if len(members) > 8:
+                raise ValueError("家庭成員最多可設定 8 人")
+            if len({name.casefold() for name in members}) != len(members):
+                raise ValueError("家庭成員姓名不可重複")
+            if any(len(name) > 80 or "\n" in name or "\r" in name for name in members):
+                raise ValueError("家庭成員姓名格式不正確")
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "speakers", "members", list(members))
+            update_yaml_value(config_path, "speakers", "enabled", bool(members))
+            removed = SpeakerProfileStore(config.storage.data_dir).prune(members)
+            suffix = f"；已刪除 {removed} 個不再使用的聲音樣本" if removed else ""
+            print(f"家庭成員已設定為 {len(members)} 人{suffix}")
+            return 0
+        if args.command == "enroll-speaker":
+            if args.name not in config.speakers.members:
+                raise ValueError("請先把這個姓名加入家庭成員清單")
+            if args.seconds < 10 or args.seconds > 60:
+                raise ValueError("註冊錄音長度必須在 10 到 60 秒之間")
+            if args.delay < 0 or args.delay > 10:
+                raise ValueError("錄音延遲必須在 0 到 10 秒之間")
+            if _listener_is_running() and not read_pause_state(config.storage.data_dir).paused:
+                raise RuntimeError("錄音服務仍在執行；請先暫停錄音再註冊聲音")
+            if args.delay:
+                time.sleep(args.delay)
+            from family_recorder.audio import AudioRecorder
+
+            recorder = AudioRecorder(config.audio)
+            with recorder.open_stream() as stream:
+                chunk = recorder.read_chunk(stream, seconds=args.seconds)
+            profile = create_profile(args.name, chunk.pcm16_mono, chunk.sample_rate)
+            SpeakerProfileStore(config.storage.data_dir).save(profile)
+            print(f"{args.name} 的聲音樣本已建立；暫存錄音未保存")
+            return 0
+        if args.command == "delete-speaker-profile":
+            if args.name not in config.speakers.members:
+                raise ValueError("找不到這位家庭成員")
+            deleted = SpeakerProfileStore(config.storage.data_dir).delete(args.name)
+            print("聲音樣本已刪除" if deleted else "這位成員尚未建立聲音樣本")
             return 0
         if args.command == "menu-status":
             print(json.dumps(_menu_status(config, args.config), ensure_ascii=False))

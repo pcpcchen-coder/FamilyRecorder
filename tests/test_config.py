@@ -57,3 +57,24 @@ def test_load_config_rejects_api_summary_provider(tmp_path: Path) -> None:
     config_file.write_text("summary:\n  provider: openai\n", encoding="utf-8")
     with pytest.raises(ValueError, match="provider must be 'codex'"):
         load_config(config_file)
+
+
+def test_load_config_accepts_household_members(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        'speakers:\n  enabled: true\n  members: ["我", "家人二", "家人三"]\n',
+        encoding="utf-8",
+    )
+    config = load_config(config_file)
+    assert config.speakers.enabled is True
+    assert config.speakers.members == ("我", "家人二", "家人三")
+
+
+def test_load_config_rejects_duplicate_household_members(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        'speakers:\n  enabled: true\n  members: ["家人", "家人"]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        load_config(config_file)

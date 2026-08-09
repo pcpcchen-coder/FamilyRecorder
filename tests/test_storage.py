@@ -6,6 +6,7 @@ from pathlib import Path
 from family_recorder.audio import AudioChunk, write_wav
 from family_recorder.config import StorageConfig
 from family_recorder.metrics import AudioAnalysis
+from family_recorder.speakers import SpeakerIdentification
 from family_recorder.storage import Storage
 
 
@@ -46,3 +47,47 @@ def test_retention_only_removes_expired_wav(tmp_path: Path) -> None:
 
     with sqlite3.connect(tmp_path / "listener.sqlite3") as connection:
         assert connection.execute("pragma integrity_check").fetchone() == ("ok",)
+
+
+def test_segment_stores_approximate_speaker_label(tmp_path: Path) -> None:
+    started = datetime(2026, 8, 9, 12, 30, tzinfo=UTC)
+    chunk = AudioChunk(b"\0" * 320, 16_000, started, started + timedelta(seconds=30))
+    analysis = AudioAnalysis(True, -20.0, 12.5, 0.7, 100)
+    speaker = SpeakerIdentification("家人二", 0.87, "recognized", 5, 4)
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        audio_path = storage.audio_path_for(started)
+        row_id = storage.save_segment(
+            chunk,
+            audio_path,
+            analysis,
+            "明天記得拿包裹。",
+            speaker=speaker,
+        )
+        transcript = storage.transcript_path_for(started.date()).read_text(encoding="utf-8")
+        assert "可能：家人二（87%）" in transcript
+        row = storage.connection.execute(
+            "select speaker_name, speaker_confidence, speaker_status from segments where id = ?",
+            (row_id,),
+        ).fetchone()
+        assert row == ("家人二", 0.87, "recognized")
+
+
+def test_existing_database_gets_speaker_columns(tmp_path: Path) -> None:
+    database = tmp_path / "listener.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE segments (
+                id INTEGER PRIMARY KEY, transcript_date TEXT, started_at TEXT, ended_at TEXT,
+                audio_path TEXT, text TEXT, rms_dbfs REAL, snr_db REAL, speech_ratio REAL,
+                status TEXT, error TEXT, created_at TEXT
+            )
+            """
+        )
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        columns = {
+            row[1] for row in storage.connection.execute("pragma table_info(segments)").fetchall()
+        }
+    assert {"speaker_name", "speaker_confidence", "speaker_status"} <= columns

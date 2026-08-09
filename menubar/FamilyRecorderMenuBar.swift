@@ -24,6 +24,20 @@ struct DownloadableWhisperModel: Decodable {
     }
 }
 
+struct SpeakerMember: Decodable {
+    let name: String
+    let enrolled: Bool
+    let createdAt: String?
+    let sampleSeconds: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case enrolled
+        case createdAt = "created_at"
+        case sampleSeconds = "sample_seconds"
+    }
+}
+
 struct RecorderStatus: Decodable {
     let paused: Bool
     let pauseLabel: String
@@ -41,6 +55,9 @@ struct RecorderStatus: Decodable {
     let whisperModels: [WhisperModel]
     let downloadableWhisperModels: [DownloadableWhisperModel]
     let summaryModel: String
+    let speakerEnabled: Bool
+    let speakerMembers: [SpeakerMember]
+    let speakerProfilesDir: String
 
     enum CodingKeys: String, CodingKey {
         case paused
@@ -59,6 +76,9 @@ struct RecorderStatus: Decodable {
         case whisperModels = "whisper_models"
         case downloadableWhisperModels = "downloadable_whisper_models"
         case summaryModel = "summary_model"
+        case speakerEnabled = "speaker_enabled"
+        case speakerMembers = "speaker_members"
+        case speakerProfilesDir = "speaker_profiles_dir"
     }
 }
 
@@ -69,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var currentStatus: RecorderStatus?
     private var downloadingWhisperModel: DownloadableWhisperModel?
+    private var enrollingSpeakerName: String?
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
 
@@ -170,7 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             currentStatus = try JSONDecoder().decode(RecorderStatus.self, from: data)
             guard let status = currentStatus else { return }
             let symbol: String
-            if let download = downloadingWhisperModel {
+            if let name = enrollingSpeakerName {
+                symbol = "person.2.fill"
+                updateStatusIcon(symbol: symbol, tooltip: "正在建立 \(name) 的聲音樣本")
+                if rebuildMenu {
+                    buildMenu(status)
+                }
+                return
+            } else if let download = downloadingWhisperModel {
                 symbol = "arrow.down.circle.fill"
                 updateStatusIcon(symbol: symbol, tooltip: "正在下載 \(download.displayName)")
                 if rebuildMenu {
@@ -239,6 +267,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 enabled: false
             )
         )
+        if status.speakerMembers.isEmpty {
+            menu.addItem(item("家庭人別：尚未設定", enabled: false))
+        } else {
+            let enrolled = status.speakerMembers.filter { $0.enrolled }.count
+            menu.addItem(
+                item("家庭人別：\(status.speakerMembers.count) 人 · 已註冊 \(enrolled) 人", enabled: false)
+            )
+        }
         menu.addItem(.separator())
 
         if status.paused {
@@ -263,6 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openMenu.addItem(item("摘要資料夾", action: #selector(openPath), representedObject: status.summaryDir))
         openMenu.addItem(item("錄音資料夾", action: #selector(openPath), representedObject: status.audioDir))
         openMenu.addItem(item("Log 資料夾", action: #selector(openPath), representedObject: status.logDir))
+        openMenu.addItem(
+            item("聲音特徵資料夾", action: #selector(openPath), representedObject: status.speakerProfilesDir)
+        )
         openMenu.addItem(item("設定檔", action: #selector(openPath), representedObject: status.configPath))
         openItem.submenu = openMenu
         menu.addItem(openItem)
@@ -331,6 +370,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelMenu.addItem(summaryItem)
         modelItem.submenu = modelMenu
         menu.addItem(modelItem)
+
+        let familyItem = item("家庭成員與人聲")
+        let familyMenu = NSMenu()
+        if status.speakerMembers.isEmpty {
+            familyMenu.addItem(item("尚未設定成員", enabled: false))
+        } else {
+            for member in status.speakerMembers {
+                let memberItem = item(member.enrolled ? "✓ \(member.name)" : "○ \(member.name)（未註冊）")
+                let memberMenu = NSMenu()
+                memberMenu.addItem(
+                    item(
+                        member.enrolled ? "重新錄製聲音樣本…" : "錄製聲音樣本…",
+                        action: #selector(enrollSpeaker),
+                        representedObject: member.name,
+                        enabled: enrollingSpeakerName == nil
+                    )
+                )
+                memberMenu.addItem(
+                    item(
+                        "刪除聲音樣本",
+                        action: #selector(deleteSpeakerProfile),
+                        representedObject: member.name,
+                        enabled: member.enrolled && enrollingSpeakerName == nil
+                    )
+                )
+                memberItem.submenu = memberMenu
+                familyMenu.addItem(memberItem)
+            }
+        }
+        familyMenu.addItem(.separator())
+        familyMenu.addItem(
+            item(
+                "設定家庭成員…",
+                action: #selector(editSpeakerMembers),
+                enabled: enrollingSpeakerName == nil
+            )
+        )
+        familyMenu.addItem(
+            item(
+                "說明：僅為本機近似判斷，不是身分驗證",
+                enabled: false
+            )
+        )
+        familyItem.submenu = familyMenu
+        menu.addItem(familyItem)
 
         menu.addItem(.separator())
         menu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
@@ -437,6 +521,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func useDefaultSummaryModel() {
         runSimpleAction(["set-summary-model", "--model", ""], successTitle: "已使用 ChatGPT 帳號預設模型")
+    }
+
+    @objc private func editSpeakerMembers() {
+        let alert = NSAlert()
+        alert.messageText = "設定家庭成員"
+        alert.informativeText =
+            "每行一位，最多 8 人。移除成員時，該成員存在本機的聲音特徵也會一併刪除。"
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 145))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.bounds)
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.string = currentStatus?.speakerMembers.map { $0.name }.joined(separator: "\n") ?? ""
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let names = textView.string
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var arguments = ["set-speakers"]
+        for name in names {
+            arguments.append(contentsOf: ["--name", name])
+        }
+        runRecorderAsync(arguments) { [weak self] status, output in
+            guard status == 0 else {
+                self?.showAlert(title: "家庭成員設定失敗", message: output)
+                return
+            }
+            let restart = self?.restartListener() ?? (1, "無法重新啟動錄音服務")
+            self?.refreshStatus(rebuildMenu: true)
+            if restart.0 != 0 {
+                self?.showAlert(title: "設定已儲存，但錄音服務重啟失敗", message: restart.1)
+            }
+        }
+    }
+
+    @objc private func enrollSpeaker(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = "建立 \(name) 的聲音樣本"
+        alert.informativeText =
+            "按下開始後有 2 秒準備時間，接著請靠近平常的收音位置，自然連續說話 15 秒。\n\n可朗讀：今天是我的聲音樣本，我正在家裡使用 FamilyRecorder。請記住我的聲音，但不需要保存這段錄音。\n\n錄音只用來產生本機聲音特徵，原始註冊音訊不會保存。"
+        alert.addButton(withTitle: "開始")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let shouldResume = !(currentStatus?.paused ?? false)
+        if shouldResume {
+            let pause = runRecorderSync(["pause"])
+            guard pause.0 == 0 else {
+                showAlert(title: "無法暫停錄音服務", message: pause.1)
+                return
+            }
+        }
+        enrollingSpeakerName = name
+        updateStatusIcon(symbol: "person.2.fill", tooltip: "正在建立 \(name) 的聲音樣本")
+        refreshStatus(rebuildMenu: true)
+        runRecorderAsync(["enroll-speaker", "--name", name, "--seconds", "15", "--delay", "2"]) {
+            [weak self] status, output in
+            guard let self else { return }
+            if shouldResume {
+                _ = self.runRecorderSync(["resume"])
+            }
+            self.enrollingSpeakerName = nil
+            self.refreshStatus(rebuildMenu: true)
+            self.showAlert(
+                title: status == 0 ? "聲音樣本已建立" : "聲音樣本建立失敗",
+                message: output
+            )
+        }
+    }
+
+    @objc private func deleteSpeakerProfile(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = "刪除 \(name) 的聲音樣本？"
+        alert.informativeText = "只會刪除本機聲音特徵；家庭成員姓名仍保留，可稍後重新錄製。"
+        alert.addButton(withTitle: "刪除")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runSimpleAction(
+            ["delete-speaker-profile", "--name", name],
+            successTitle: "聲音樣本已刪除"
+        )
     }
 
     @objc private func chooseSummaryModel() {

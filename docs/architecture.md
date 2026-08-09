@@ -8,6 +8,8 @@ FamilyRecorder intentionally separates the always-on local path from the schedul
 
 `WhisperCppTranscriber` invokes `whisper-cli` as a subprocess. Successful text is appended to one date-scoped Markdown file and indexed in SQLite. A failed transcription is indexed as `failed` and keeps its WAV for diagnosis. Retention is independent of transcript retention.
 
+When household speakers are enabled, the same in-memory PCM is divided into short windows and reduced to normalized spectral, pitch, and timing features. Those vectors are compared only with intentionally enrolled local profiles. The result is a conservative whole-chunk hint (`recognized`, `mixed`, or `uncertain`), not word-level diarization or authentication. Enrollment audio is never written; JSON feature profiles are mode `0600` under `speaker-profiles/`.
+
 ## Cloud summary
 
 `DailySummaryRunner` accepts a calendar date and opens only the corresponding Markdown file under `transcripts/`. It pipes that text to the official Codex CLI, which reuses its own saved “Sign in with ChatGPT” session. FamilyRecorder never reads the Codex authentication file and has no API-key integration. It writes the returned text under `summaries/` and indexes it in SQLite.
@@ -24,13 +26,13 @@ Both are per-user LaunchAgents, not root daemons. No API key or Codex token is p
 
 ## Menu bar control path
 
-The Swift menu bar app never opens the microphone itself. It invokes the installed `family-recorder` CLI for status, pause/resume, targeted YAML edits, summaries, and diagnostics. Pause state is atomically persisted as `data_dir/control.json`; the listener checks it before opening a stream and after every captured chunk. A chunk overlapping a newly requested pause is discarded.
+The Swift menu bar app invokes the installed `family-recorder` CLI for status, pause/resume, targeted YAML edits, summaries, diagnostics, and intentional speaker enrollment. Enrollment temporarily pauses the listener, opens the microphone through the same Python capture path, retains PCM only in memory until features are saved, and resumes only if the menu itself initiated the pause. Pause state is atomically persisted as `data_dir/control.json`; the listener checks it before opening a stream and during capture. A chunk overlapping a newly requested pause is discarded.
 
 Whisper model choices are discovered from already-downloaded `ggml-*.bin` files. Targeted config edits preserve unrelated YAML comments and values. Switching the local model requires a listener restart, while the Codex summary model is read fresh for every summary run.
 
-## Explicit non-goals for v0.2
+## Explicit non-goals
 
-- Speaker identification or diarization
+- Biometric-grade speaker identification, authentication, or word-level diarization
 - Covert recording
 - Live cloud transcription
 - Uploading or remotely backing up raw audio

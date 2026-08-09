@@ -9,6 +9,12 @@ from family_recorder.audio import AudioChunk, AudioRecorder, CaptureInterrupted,
 from family_recorder.config import AppConfig
 from family_recorder.control import ControlStateError, read_pause_state
 from family_recorder.metrics import AudioAnalysis, analyze_audio
+from family_recorder.speakers import (
+    SpeakerIdentification,
+    SpeakerProfileError,
+    SpeakerProfileStore,
+    identify_speaker,
+)
 from family_recorder.storage import Storage
 from family_recorder.transcriber import WhisperCppTranscriber
 
@@ -33,6 +39,7 @@ def _transcribe_segment(
     chunk: AudioChunk,
     audio_path: Path,
     analysis: AudioAnalysis,
+    speaker: SpeakerIdentification | None,
     *,
     raise_errors: bool,
 ) -> None:
@@ -47,6 +54,7 @@ def _transcribe_segment(
                     analysis,
                     text,
                     status=status,
+                    speaker=speaker,
                 )
                 if text:
                     LOGGER.info("Transcript stored (%d characters)", len(text))
@@ -62,6 +70,7 @@ def _transcribe_segment(
                     "",
                     status="failed",
                     error=str(exc)[-2_000:],
+                    speaker=speaker,
                 )
                 LOGGER.exception("Transcription failed; audio retained at %s", audio_path)
                 if raise_errors:
@@ -76,6 +85,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
     recorder = AudioRecorder(config.audio)
     transcriber = WhisperCppTranscriber(config.whisper)
     transcriber.validate()
+    profile_store = SpeakerProfileStore(config.storage.data_dir)
 
     with (
         Storage(config.storage) as storage,
@@ -147,6 +157,31 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                                 return
                             continue
 
+                        speaker: SpeakerIdentification | None = None
+                        if config.speakers.enabled and config.speakers.members:
+                            try:
+                                profiles = [
+                                    profile
+                                    for name in config.speakers.members
+                                    if (profile := profile_store.load(name)) is not None
+                                ]
+                                speaker = identify_speaker(
+                                    chunk.pcm16_mono,
+                                    chunk.sample_rate,
+                                    profiles,
+                                    config.speakers,
+                                )
+                                if speaker.status == "recognized":
+                                    LOGGER.info(
+                                        "Approximate speaker: %s (similarity %.1f%%)",
+                                        speaker.label,
+                                        (speaker.confidence or 0) * 100,
+                                    )
+                                elif profiles:
+                                    LOGGER.info("Approximate speaker: %s", speaker.status)
+                            except SpeakerProfileError as exc:
+                                LOGGER.error("Speaker profile ignored: %s", exc)
+
                         audio_path = storage.audio_path_for(chunk.started_at)
                         write_wav(audio_path, chunk.pcm16_mono, chunk.sample_rate)
                         # The worker receives only timing metadata, not the PCM
@@ -166,6 +201,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             stored_chunk,
                             audio_path,
                             analysis,
+                            speaker,
                             raise_errors=once,
                         )
 

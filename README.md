@@ -7,10 +7,12 @@ XVF3800 / XMOS UAC2
         │
         ▼
 本機 30 秒 PCM chunk ──► RMS + WebRTC VAD ──► whisper.cpp（zh / Metal）
+              │                                      │
+              └──► 本機家庭人聲近似比對 ────────────┤
                                                      │
                                 ┌────────────────────┴─────────────┐
                                 ▼                                  ▼
-                    transcripts/YYYY-MM-DD.md              listener.sqlite3
+              含「可能是誰」的每日逐字稿                    listener.sqlite3
                                 │
                                 │ 每日排程；只讀取並上傳文字
                                 ▼
@@ -36,6 +38,7 @@ XVF3800 / XMOS UAC2
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；過長逐字稿會分段整理後再去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
+- 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
 XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)。
@@ -162,6 +165,11 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `whisper.language` | `zh` | Whisper 語言 |
 | `storage.keep_audio_days` | `7` | WAV 保留天數；0 代表只保留仍未超過當下 cutoff 的檔案 |
 | `storage.delete_audio_after_transcription` | `false` | 成功或空白轉錄後立即刪 WAV；失敗 WAV 仍保留 |
+| `speakers.enabled` | `false` | 有家庭成員時由選單自動開啟本機近似人別 |
+| `speakers.members` | `[]` | 已知家庭成員姓名，選單可設定 1–8 人 |
+| `speakers.min_similarity` | `0.82` | 聲音特徵最低相似度；提高可減少誤認、但增加「不確定」 |
+| `speakers.min_margin` | `0.025` | 第一名至少要比第二名高出的差距 |
+| `speakers.dominance_threshold` | `0.65` | 一個 chunk 內必須有多少分析視窗同意主要人選 |
 | `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
 | `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
@@ -223,6 +231,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 從實際已下載的 `ggml-*.bin` 清單切換本機 Whisper；切換後會重啟 listener。
 - 在「本機 Whisper → 下載其他模型…」依標準、量化省空間、舊版相容三組直接下載新的多語模型；會顯示預估容量，支援失敗後續傳，完成 GGML 格式驗證後才切換並重啟 listener，原有模型不會刪除。
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。
+- 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
 
 暫停狀態存在 `data_dir/control.json`，不是只存在 UI 記憶體；因此選單列程式重啟不會意外恢復錄音，定時暫停到期則由 listener 自動恢復。選「結束選單列程式」只會關閉圖示，不會停止 listener；重新登入或重跑安裝腳本即可再次顯示。
@@ -243,6 +252,30 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 ```
 
 listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重試；重新插入後會再次自動選擇裝置。
+
+## 家庭成員近似人別
+
+這項功能特別針對「少數、固定、已知家庭成員」設計，不是泛用語者分離或身分驗證。首次使用：
+
+1. 點選選單列 FamilyRecorder →「家庭成員與人聲」→「設定家庭成員…」。
+2. 每行輸入一位成員；姓名只進入這台 Mac 的私人 YAML，不必寫進公開 repo。
+3. 逐一點選成員 →「錄製聲音樣本…」，按畫面句子自然說話 15 秒。錄音服務會暫停，完成後自動恢復。
+4. 每人最好站在平常說話的位置、以自然音量錄製；環境、麥克風位置或聲音明顯改變時可重新錄製。兒童聲音隨成長變化，建議定期更新。
+
+系統會把 30 秒 chunk 切成數個短視窗，比較音色、頻譜與音高特徵；只有相似度、第一／第二名差距與多視窗一致性都達標才顯示姓名。多人同時說話、電視、距離過遠或把握不足時，會標「可能多人」或「不確定」。目前標的是整段的主要可能說話者，不是逐字逐句分離；錯認仍然可能發生，摘要也被要求不得把此標籤當成已確認事實。
+
+註冊音訊只存在記憶體中，產生特徵後即丟棄，不會建立 WAV。特徵以權限 `0600` 保存在 `speaker-profiles/`，不會送給 Whisper、Codex 或其他雲端服務；但它仍屬敏感個人資料，應保護 Mac 帳號與備份。刪除成員或選「刪除聲音樣本」會移除對應檔案。
+
+也可用指令設定通用範例與註冊（listener 執行時要先暫停）：
+
+```bash
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" \
+  set-speakers --name "我" --name "家人二" --name "家人三"
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" pause
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" \
+  enroll-speaker --name "我" --seconds 15
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" resume
+```
 
 ## Mic placement test
 
@@ -282,6 +315,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 ├── transcripts/YYYY-MM-DD.md
 ├── summaries/YYYY-MM-DD.md
 ├── placement-tests/YYYYMMDD-HHMMSS/
+├── speaker-profiles/speaker-<雜湊>.json # 本機聲音特徵；無原始註冊音訊
 ├── control.json                         # 僅在暫停時存在
 ├── logs/
 └── listener.sqlite3
@@ -292,6 +326,8 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 - `transcribed`：Whisper 有文字，已附加到當日 Markdown。
 - `empty`：Whisper 成功但沒有文字，不寫 Markdown。
 - `failed`：Whisper 失敗；WAV 一律保留直到 retention 到期，以利排查。
+
+人別欄位為 `speaker_name`、`speaker_confidence` 與 `speaker_status`；`speaker_status` 可能為 `recognized`、`mixed`、`uncertain` 或 `disabled`。`speaker_confidence` 是本機特徵相似度，不是統計校準後的身分機率。
 
 手動執行 retention：
 
@@ -317,7 +353,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 產物為 `dist/FamilyRecorder-<版本>-arm64.dmg` 與對應的 `.sha256`。若要公開散布且不顯示 Gatekeeper 未公證警告，發行者還需使用 Developer ID Application 憑證簽署並送 Apple notarization；一般 Apple Development 憑證不等同公開發行公證。
 
-硬體不在 CI 測試範圍；裝置選擇、雙聲道 downmix／取樣率轉換、VAD 指標、Whisper CLI 介面、SQLite／Markdown、retention、純文字摘要與 CER 報告都有隔離測試。
+硬體不在 CI 測試範圍；裝置選擇、雙聲道 downmix／取樣率轉換、VAD 指標、Whisper CLI 介面、SQLite migration／Markdown、人聲特徵儲存與近似分類、retention、純文字摘要與 CER 報告都有隔離測試。
 
 ## 驗收清單
 
@@ -333,7 +369,9 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 10. 重開機／重新登入後三個 `launchctl print` 工作存在，右上角有 FamilyRecorder 圖示。
 11. 選單列暫停後不再產生 chunk，恢復後 listener 繼續；模型清單與資料夾捷徑可用。
 12. A/B/C placement report 有每句轉錄、RMS、SNR、speech ratio、CER 與彙總表。
-13. `ruff check .` 與 `pytest` 全數通過。
+13. 設定三位測試成員並完成樣本後，選單顯示 3/3；逐字稿出現「可能：某人」或保守的「可能多人／不確定」，SQLite 三個 speaker 欄位同步。
+14. 刪除其中一位樣本後，對應 `speaker-*.json` 消失，其他成員不受影響。
+15. `ruff check .`、`ruff format --check .` 與 `pytest` 全數通過。
 
 ## 常見問題
 
@@ -344,6 +382,8 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 **LaunchAgent 沒收到聲音**：先確定同一支已安裝的 runtime binary 能手動 `listen --once`；檢查「系統設定 → 隱私權與安全性 → 麥克風」與 `listener.error.log`。macOS 麥克風權限是每台機器的互動授權，安裝腳本不能替你繞過。
 
 **一直被 VAD 略過**：查看 log 的 RMS 與 speech ratio，先以 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。
+
+**人別常顯示不確定／認錯人**：讓每位成員在相同麥克風位置重新錄製自然語音，避免電視、音樂與多人同時說話。若誤認多，提高 `min_similarity` 或 `min_margin`；若大多不確定，才小幅降低。這項功能不能用於門禁、付款、家長監護或任何需要確認身分的用途。
 
 **Whisper 變慢或發熱**：把模型改成 `medium` 或 `small` 並更新 YAML；不要只增加 threads。確認安裝輸出包含 Metal，且 `doctor` 指向正確 build。
 
