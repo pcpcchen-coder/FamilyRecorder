@@ -71,3 +71,5 @@ echo
 echo "Installation complete. Next run:"
 echo "  $RUNTIME_ROOT/venv/bin/family-recorder --config $CONFIG_PATH doctor"
 echo "Then follow README.md to grant Microphone access and run a one-chunk test."
+echo "After that, install the menu bar controls with:"
+echo "  $REPO_ROOT/scripts/install_menubar.sh"

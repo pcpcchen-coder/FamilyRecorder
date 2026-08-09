@@ -7,6 +7,7 @@ from pathlib import Path
 
 from family_recorder.audio import AudioChunk, AudioRecorder, write_wav
 from family_recorder.config import AppConfig
+from family_recorder.control import ControlStateError, read_pause_state
 from family_recorder.metrics import AudioAnalysis, analyze_audio
 from family_recorder.storage import Storage
 from family_recorder.transcriber import WhisperCppTranscriber
@@ -84,7 +85,24 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
             )
 
         processed = 0
+        pause_was_logged = False
         while True:
+            try:
+                pause_state = read_pause_state(config.storage.data_dir)
+            except ControlStateError as exc:
+                LOGGER.error("%s; ignoring pause state", exc)
+                pause_state = None
+            if pause_state is not None and pause_state.paused:
+                if not pause_was_logged:
+                    LOGGER.info("%s", pause_state.label)
+                    pause_was_logged = True
+                if once:
+                    return
+                time.sleep(5)
+                continue
+            if pause_was_logged:
+                LOGGER.info("Recording resumed")
+                pause_was_logged = False
             try:
                 with recorder.open_stream() as stream:
                     assert recorder.device is not None
@@ -97,6 +115,15 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                     )
                     while True:
                         chunk = recorder.read_chunk(stream)
+                        try:
+                            pause_state = read_pause_state(config.storage.data_dir)
+                        except ControlStateError as exc:
+                            LOGGER.error("%s; ignoring pause state", exc)
+                            pause_state = None
+                        if pause_state is not None and pause_state.paused:
+                            LOGGER.info("Pause activated; discarding the in-progress chunk")
+                            pause_was_logged = True
+                            break
                         processed += 1
                         analysis = analyze_audio(chunk.pcm16_mono, chunk.sample_rate, config.vad)
                         LOGGER.info(

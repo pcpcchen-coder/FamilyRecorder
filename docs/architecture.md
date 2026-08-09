@@ -18,8 +18,15 @@ Each Codex invocation uses an ephemeral session, a read-only sandbox, an empty t
 
 - `com.familyrecorder.listener`: `RunAtLoad` plus `KeepAlive` after failures.
 - `com.familyrecorder.summary`: `StartCalendarInterval`, with hour/minute read from YAML when the plist is installed.
+- `com.familyrecorder.menubar`: native AppKit status item, started in the Aqua login session and restarted only after unexpected exits.
 
 Both are per-user LaunchAgents, not root daemons. No API key or Codex token is placed in launchd environment variables; the summary job only provides `HOME` so the official CLI can locate its own saved login.
+
+## Menu bar control path
+
+The Swift menu bar app never opens the microphone itself. It invokes the installed `family-recorder` CLI for status, pause/resume, targeted YAML edits, summaries, and diagnostics. Pause state is atomically persisted as `data_dir/control.json`; the listener checks it before opening a stream and after every captured chunk. A chunk overlapping a newly requested pause is discarded.
+
+Whisper model choices are discovered from already-downloaded `ggml-*.bin` files. Targeted config edits preserve unrelated YAML comments and values. Switching the local model requires a listener restart, while the Codex summary model is read fresh for every summary run.
 
 ## Explicit non-goals for v0.2
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from family_recorder.audio import AudioChunk
 from family_recorder.config import AppConfig, StorageConfig
+from family_recorder.control import pause_recording
 from family_recorder.devices import AudioDevice
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.storage import Storage
@@ -69,3 +70,34 @@ def test_capture_continues_while_previous_chunk_is_transcribed(
     with Storage(config.storage) as storage:
         row = storage.connection.execute("select status, text from segments").fetchone()
     assert row == ("transcribed", "連續錄音")
+
+
+def test_listener_does_not_open_microphone_while_paused(tmp_path: Path, monkeypatch) -> None:
+    import family_recorder.listener as listener
+
+    opened = False
+
+    class FakeTranscriber:
+        def __init__(self, _config) -> None:
+            pass
+
+        def validate(self) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, _config) -> None:
+            pass
+
+        @contextlib.contextmanager
+        def open_stream(self):
+            nonlocal opened
+            opened = True
+            yield object()
+
+    monkeypatch.setattr(listener, "AudioRecorder", FakeRecorder)
+    monkeypatch.setattr(listener, "WhisperCppTranscriber", FakeTranscriber)
+    config = AppConfig(storage=StorageConfig(data_dir=tmp_path))
+    pause_recording(tmp_path)
+
+    listener.run_listener(config, once=True)
+    assert opened is False

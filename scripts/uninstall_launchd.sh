@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-for LABEL in com.familyrecorder.listener com.familyrecorder.summary; do
+for LABEL in com.familyrecorder.listener com.familyrecorder.summary com.familyrecorder.menubar; do
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   if [[ -f "$PLIST" ]]; then
     launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
