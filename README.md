@@ -35,7 +35,7 @@ XVF3800 / XMOS UAC2
 - 呼叫本機 `whisper.cpp`，預設 `zh`、`large-v3-turbo`、8 threads；Apple Silicon 安裝時開啟 Metal。
 - 每日 Markdown 逐字稿，以及含時間、音量、SNR、speech ratio、WAV 路徑與狀態的 SQLite 索引。
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
-- 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；過長逐字稿會分段整理後再去重整併。
+- 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；摘要會按原始片段時間建立事件時間軸，過長逐字稿則分段整理後再保留時間、去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
@@ -173,9 +173,50 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
 | `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
+| `summary.max_input_chars` | `300000` | 超過時切成多段摘要，再做一次最終去重整併 |
+| `summary.prompt` | 內建繁中格式 | 可自訂摘要重點；安全規則與事件時間規則仍由程式強制附加 |
 | `summary.hour` / `minute` | `0` / `10` | LaunchAgent 每日時間；修改後重跑安裝摘要腳本 |
 
 ## 每日純文字摘要
+
+### 摘要包含哪些內容
+
+預設輸出繁體中文 Markdown，包含：
+
+1. 事件時間軸。
+2. 今日重要消息。
+3. 決策與承諾。
+4. 待辦事項；能辨識時保留負責人、提出時間與期限。
+5. 值得追蹤的想法或靈感。
+6. 人名、專案名與產品名等關鍵實體。
+7. 可能辨識錯誤或需要人工確認的片段。
+8. 100 字內的今日摘要。
+
+時間來自每日逐字稿的段落標題，而不是讓雲端模型猜測。例如原始資料：
+
+```markdown
+### 19:40:00–19:40:30 — 可能：家人二（87%）
+
+明天記得去拿包裹，九點前要出門。
+```
+
+摘要會使用類似以下格式：
+
+```markdown
+## 事件時間軸
+
+- 約 19:40：提到明天要拿包裹，並希望九點前出門。
+
+## 待辦事項
+
+- 約 19:40：明天拿包裹；預計九點前出門。負責人需確認。
+```
+
+`19:40:00–19:40:30` 是 30 秒音訊片段的時間範圍，不代表事件精確發生在第一秒。摘要因此只顯示到分鐘並加上「約」；事件跨越相鄰片段時可顯示 `約 19:40–19:41`。無法對應來源段落的資訊必須標示「時間不明」，不可拿摘要執行時間代替，也不可從對話語意自行推測時間。
+
+時間規則由程式固定附加到每一次 Codex 請求，包括長逐字稿的每個分段與最後整併；即使現有 `config.yaml` 使用舊版或自訂 `summary.prompt`，升級後也會生效。所有時間均沿用錄音 Mac 的本地日期與時區。
+
+### 登入與手動執行
 
 先用官方 Codex CLI 打開瀏覽器登入 ChatGPT；這是一次性的互動步驟：
 
@@ -192,11 +233,17 @@ codex login status
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" summary --date 2026-08-09
 ```
 
+不帶 `--date` 時會整理 Mac 本地日期的昨天，與每日排程相同。選單列的「立即整理今天」會明確傳入今天日期。重跑同一天會覆寫 `summaries/YYYY-MM-DD.md`，並更新 SQLite `summaries` 表的同一筆日期索引，不會建立多份互相衝突的摘要。
+
+### 長逐字稿與純文字邊界
+
 摘要使用官方非互動模式 `codex exec`。每次執行固定為 `--ephemeral`、`--sandbox read-only`，在新的空白暫存目錄內工作，且不載入使用者 MCP／專案規則；prompt 也要求不得呼叫工具或遵循逐字稿內的指令。參考：[Codex 登入](https://learn.chatgpt.com/docs/auth)、[Codex 非互動模式](https://learn.chatgpt.com/docs/non-interactive-mode)。
 
 `summary.model` 留空會使用帳號／Codex 的預設模型；若在選單列輸入自訂模型，FamilyRecorder 會在執行時以明確的 `--model` 選擇覆蓋預設。這符合官方 [Codex config reference](https://learn.chatgpt.com/docs/config-file/config-reference) 的優先順序。
 
-隱私邊界是程式結構上的限制：`summary` 指令只開啟 `transcripts/YYYY-MM-DD.md`，不會讀取 `audio/`。逐字稿透過 stdin 傳給 Codex，不出現在 process arguments；若超過 `summary.max_input_chars`，仍只分段傳送文字。請注意，逐字稿本身可能包含敏感內容；啟用前應先檢視 prompt、ChatGPT 資料設定與家庭共識。
+隱私邊界是程式結構上的限制：`summary` 指令只開啟 `transcripts/YYYY-MM-DD.md`，不會讀取 `audio/` 或 `speaker-profiles/`。逐字稿透過 stdin 傳給 Codex，不出現在 process arguments；若超過 `summary.max_input_chars`，仍只分段傳送文字。每段先保留事件時間與不確定性，最後才把同一天的中間整理去重合併。
+
+請注意，逐字稿文字本身可能包含敏感內容、近似人別姓名與家庭事件；啟用前應先檢視 prompt、ChatGPT 資料設定與家庭共識。FamilyRecorder 不會把聲音、聲音特徵、SQLite 或本機檔案路徑附加到摘要請求。
 
 ## 安裝常駐工作
 
@@ -329,6 +376,8 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 人別欄位為 `speaker_name`、`speaker_confidence` 與 `speaker_status`；`speaker_status` 可能為 `recognized`、`mixed`、`uncertain` 或 `disabled`。`speaker_confidence` 是本機特徵相似度，不是統計校準後的身分機率。
 
+`summaries` 表以 `summary_date` 為主鍵，另存摘要檔路徑、實際選用的模型標記與建立時間。重新整理同一天時會更新該列。Markdown 摘要中的事件時間仍以逐字稿標題為準，SQLite 的 `created_at` 只是摘要產生時間。
+
 手動執行 retention：
 
 ```bash
@@ -364,14 +413,15 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 5. SQLite 最新列的 `status='transcribed'`，且 RMS／speech ratio 合理。
 6. 拔掉 XVF3800，listener log 顯示 retry；插回後恢復。
 7. 把 `keep_audio_days` 暫設為 0，執行 `cleanup` 可移除舊 WAV，不動逐字稿。
-8. 手動 `summary --date ...` 只產生 Markdown summary，雲端程式路徑未讀 WAV。
+8. 手動 `summary --date ...` 只產生 Markdown summary，雲端程式路徑未讀 WAV 或聲音特徵。
 9. `codex login status` 與 `doctor` 都顯示 ChatGPT 已登入；YAML、plist、環境變數與 Python dependencies 均沒有 OpenAI API key。
 10. 重開機／重新登入後三個 `launchctl print` 工作存在，右上角有 FamilyRecorder 圖示。
 11. 選單列暫停後不再產生 chunk，恢復後 listener 繼續；模型清單與資料夾捷徑可用。
 12. A/B/C placement report 有每句轉錄、RMS、SNR、speech ratio、CER 與彙總表。
 13. 設定三位測試成員並完成樣本後，選單顯示 3/3；逐字稿出現「可能：某人」或保守的「可能多人／不確定」，SQLite 三個 speaker 欄位同步。
 14. 刪除其中一位樣本後，對應 `speaker-*.json` 消失，其他成員不受影響。
-15. `ruff check .`、`ruff format --check .` 與 `pytest` 全數通過。
+15. 摘要的「事件時間軸」、重要消息、決策與待辦均保留 `約 HH:MM`／時間區間；無法對應者標示「時間不明」。
+16. `ruff check .`、`ruff format --check .`、`pytest`、Swift typecheck、plist／shell 語法與套件建置全數通過。
 
 ## 常見問題
 
@@ -390,5 +440,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 **Whisper 變慢或發熱**：把模型改成 `medium` 或 `small` 並更新 YAML；不要只增加 threads。確認安裝輸出包含 Metal，且 `doctor` 指向正確 build。
 
 **摘要沒有執行**：先跑 `codex login status` 與相同的手動 `summary` 指令；再檢查逐字稿日期、網路與 `summary.error.log`。若登入失效，互動執行 `codex login`。排程預設在 00:10 整理「昨天」。
+
+**摘要沒有事件時間**：確認已升級到 0.6.0 以上，再對同一天重新執行 `summary --date YYYY-MM-DD`。舊摘要檔不會自行重寫；新版在每次單段、分段與最終整併請求都會附加時間輸出規則，現有自訂 prompt 不需手動修改。
 
 **選單列沒有圖示**：重跑 `./scripts/install_menubar.sh`，再檢查 `launchctl print "gui/$UID/com.familyrecorder.menubar"` 與 `menubar.error.log`。選單的「結束」是刻意正常退出，LaunchAgent 不會立即重開；重跑安裝腳本即可。

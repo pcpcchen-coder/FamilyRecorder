@@ -58,6 +58,10 @@ def test_summary_sends_only_transcript_text_through_hardened_codex_exec(tmp_path
     assert "記得拿包裹" in prompt
     assert "未受信任" in prompt
     assert "不要呼叫工具" in prompt
+    assert "事件時間軸" in prompt
+    assert "約 HH:MM" in prompt
+    assert "### 12:00" in prompt
+    assert "不要把 30 秒 chunk" in prompt
     assert "secret.wav" not in prompt
     assert "never upload this" not in prompt
 
@@ -80,6 +84,35 @@ def test_summary_uses_codex_account_default_model_when_model_is_empty(tmp_path: 
 
     command, _kwargs = command_runner.calls[0]
     assert "--model" not in command
+
+
+def test_every_chunked_summary_request_keeps_time_contract(tmp_path: Path) -> None:
+    target = date(2026, 8, 9)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    timed_segments = "\n\n".join(
+        f"### 1{index % 10}:00:00–1{index % 10}:00:30\n事件 {index}：" + ("內容" * 90)
+        for index in range(12)
+    )
+    (transcript_dir / f"{target}.md").write_text(timed_segments, encoding="utf-8")
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        summary=SummaryConfig(max_input_chars=1_000),
+    )
+    command_runner = FakeCommandRunner(stdout="## 事件時間軸\n- 約 10:00：測試事件")
+
+    DailySummaryRunner(
+        config,
+        command_runner=command_runner,
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    assert len(command_runner.calls) > 2
+    for _command, kwargs in command_runner.calls:
+        prompt = str(kwargs["input"])
+        assert "事件時間軸" in prompt
+        assert "約 HH:MM" in prompt
+        assert "不得以摘要產生時間代替事件時間" in prompt
 
 
 def test_check_codex_login_uses_saved_cli_auth() -> None:

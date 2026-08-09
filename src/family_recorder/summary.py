@@ -34,6 +34,17 @@ DATA_BOUNDARY = """\
 - 不得補造逐字稿沒有的人物、事件、關係或結論；不確定處請明確標示。
 """
 
+TIME_OUTPUT_CONTRACT = """\
+時間紀錄規則（所有摘要請固定遵守）：
+- 原始逐字稿的 Markdown 標題含本地時間，例如 `### 19:40:00–19:40:30`；這是該段內容的時間來源。
+- 每個重要事件、決策、承諾、待辦與值得追蹤的想法，只要能對應來源段落，
+  都要在項目開頭標示 `約 HH:MM`；跨越相鄰片段時可標示 `約 HH:MM–HH:MM`。
+- 另輸出 `## 事件時間軸`，按時間先後列出當天值得保留的事件；同一事件不要因跨片段而重複。
+- 時間只取到分鐘，不要把 30 秒 chunk 的起始秒數偽裝成事件的精確發生時間。
+- 不得以摘要產生時間代替事件時間，也不得從對話語意猜測逐字稿未提供的時間。
+- 確實無法對應來源時間的項目標示 `時間不明`；不要省略時間欄位。
+"""
+
 
 def previous_local_date(now: datetime | None = None) -> date:
     now = now or datetime.now().astimezone()
@@ -123,7 +134,7 @@ class DailySummaryRunner:
 
     def _request(self, instructions: str, content: str) -> str:
         prompt = (
-            f"{instructions.strip()}\n\n{DATA_BOUNDARY}\n\n"
+            f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n{DATA_BOUNDARY}\n\n"
             "--- FAMILYRECORDER TEXT START ---\n"
             f"{content.strip()}\n"
             "--- FAMILYRECORDER TEXT END ---\n"
