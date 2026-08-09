@@ -10,18 +10,18 @@ FamilyRecorder intentionally separates the always-on local path from the schedul
 
 ## Cloud summary
 
-`DailySummaryRunner` accepts a calendar date and opens only the corresponding Markdown file under `transcripts/`. It obtains an API key from macOS Keychain, calls the OpenAI Responses API with `store=False`, then writes the resulting text under `summaries/` and indexes it in SQLite.
+`DailySummaryRunner` accepts a calendar date and opens only the corresponding Markdown file under `transcripts/`. It pipes that text to the official Codex CLI, which reuses its own saved “Sign in with ChatGPT” session. FamilyRecorder never reads the Codex authentication file and has no API-key integration. It writes the returned text under `summaries/` and indexes it in SQLite.
 
-The summary runner has no audio decoding or upload implementation. This makes the “text only” boundary testable rather than relying on a prompt instruction.
+Each Codex invocation uses an ephemeral session, a read-only sandbox, an empty temporary working directory, and ignores user config and project rules. The prompt treats transcript content as untrusted and disallows tool use. The summary runner has no audio decoding or upload implementation. This makes the “text only” boundary testable rather than relying on a prompt instruction.
 
 ## Scheduled processes
 
 - `com.familyrecorder.listener`: `RunAtLoad` plus `KeepAlive` after failures.
 - `com.familyrecorder.summary`: `StartCalendarInterval`, with hour/minute read from YAML when the plist is installed.
 
-Both are per-user LaunchAgents, not root daemons. Keys are never placed in launchd environment variables.
+Both are per-user LaunchAgents, not root daemons. No API key or Codex token is placed in launchd environment variables; the summary job only provides `HOME` so the official CLI can locate its own saved login.
 
-## Explicit non-goals for v0.1
+## Explicit non-goals for v0.2
 
 - Speaker identification or diarization
 - Covert recording

@@ -54,6 +54,19 @@ else
   echo "Preserving existing configuration: $CONFIG_PATH"
 fi
 
+CODEX_BIN="$(command -v codex || true)"
+if [[ -z "$CODEX_BIN" && -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]]; then
+  CODEX_BIN="/Applications/ChatGPT.app/Contents/Resources/codex"
+fi
+if [[ -n "$CODEX_BIN" ]]; then
+  echo "Found official Codex CLI: $CODEX_BIN"
+  "$CODEX_BIN" login status || {
+    echo "Run '$CODEX_BIN login' interactively before installing daily summaries." >&2
+  }
+else
+  echo "Codex CLI not found; install it and run 'codex login' for daily summaries." >&2
+fi
+
 echo
 echo "Installation complete. Next run:"
 echo "  $RUNTIME_ROOT/venv/bin/family-recorder --config $CONFIG_PATH doctor"

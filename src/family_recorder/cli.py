@@ -9,11 +9,15 @@ from pathlib import Path
 
 from family_recorder.config import AppConfig, load_config
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
-from family_recorder.keychain import KeychainError, read_generic_password
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.placement import run_placement_test
 from family_recorder.storage import Storage
-from family_recorder.summary import DailySummaryRunner
+from family_recorder.summary import (
+    DailySummaryRunner,
+    SummaryError,
+    check_codex_login,
+    resolve_codex_binary,
+)
 
 DEFAULT_CONFIG = Path("~/.config/familyrecorder/config.yaml").expanduser()
 
@@ -64,13 +68,12 @@ def _doctor(config: AppConfig) -> int:
         failed = True
     if config.summary.enabled:
         try:
-            read_generic_password(
-                config.summary.keychain_service,
-                config.summary.keychain_account,
-            )
-            print(f"[OK] Keychain service: {config.summary.keychain_service}")
-        except KeychainError as exc:
-            print(f"[MISSING] Keychain: {exc}")
+            binary = resolve_codex_binary(config.summary.codex_binary_path)
+            status = check_codex_login(config.summary, binary=binary)
+            print(f"[OK] Codex binary: {binary}")
+            print(f"[OK] ChatGPT login: {status}")
+        except SummaryError as exc:
+            print(f"[MISSING] ChatGPT login: {exc}")
             failed = True
     return int(failed)
 

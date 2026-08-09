@@ -14,13 +14,14 @@ XVF3800 / XMOS UAC2
                                 │
                                 │ 每日排程；只讀取並上傳文字
                                 ▼
-                      OpenAI Responses API
+                    官方 Codex CLI
+                    （ChatGPT 網頁登入）
                                 │
                                 ▼
                       summaries/YYYY-MM-DD.md
 ```
 
-原始 WAV 不會交給雲端摘要程式。雲端請求使用 `store=False`，API key 從 macOS Keychain 即時讀取，不寫入 YAML、plist 或 log。
+原始 WAV 不會交給雲端摘要程式。每日摘要沿用官方 Codex CLI 的「Sign in with ChatGPT」登入，不使用 OpenAI API key，也不讀取或複製瀏覽器 cookie／OAuth token。
 
 > 使用前請先取得所有可能被錄音者的明確同意，清楚標示正在收音，並依所在地規範使用。本專案不提供隱蔽錄音功能。
 
@@ -32,7 +33,7 @@ XVF3800 / XMOS UAC2
 - 呼叫本機 `whisper.cpp`，預設 `zh`、`large-v3-turbo`、8 threads；Apple Silicon 安裝時開啟 Metal。
 - 每日 Markdown 逐字稿，以及含時間、音量、SNR、speech ratio、WAV 路徑與狀態的 SQLite 索引。
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
-- 每日只把逐字稿文字送到 OpenAI Responses API；過長逐字稿會分段整理後再去重整併。
+- 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；過長逐字稿會分段整理後再去重整併。
 - 兩個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
@@ -44,7 +45,7 @@ XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 
 - macOS、使用者登入階段可使用的 USB 音訊裝置
 - [Homebrew](https://brew.sh/)
 - 約 2–4 GB 可用空間供程式、模型與 build；錄音資料另計，16 kHz mono PCM16 在持續有語音的極端情況約 2.8 GB／日
-- 雲端摘要才需要網路與 OpenAI API key；監聽、VAD、轉錄不需要網路
+- 雲端摘要才需要網路、官方 Codex CLI，以及可使用 Codex 的 ChatGPT 帳號；不需要 API key。監聽、VAD、轉錄不需要網路
 
 ## 安裝
 
@@ -62,6 +63,7 @@ cd FamilyRecorder
 4. checkout `whisper.cpp` v1.8.1，以 `GGML_METAL=ON` 編譯。
 5. 下載 `ggml-large-v3-turbo.bin`。
 6. 僅在不存在時建立 `~/.config/familyrecorder/config.yaml`，不覆蓋舊設定。
+7. 偵測官方 Codex CLI／ChatGPT app，並顯示目前的 ChatGPT 登入狀態。
 
 `whisper.cpp` 官方將 Apple Silicon／Metal 列為一級支援，且 `whisper-cli` 使用 16-bit WAV；參考其[官方 README](https://github.com/ggml-org/whisper.cpp)。
 
@@ -135,23 +137,21 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `whisper.language` | `zh` | Whisper 語言 |
 | `storage.keep_audio_days` | `7` | WAV 保留天數；0 代表只保留仍未超過當下 cutoff 的檔案 |
 | `storage.delete_audio_after_transcription` | `false` | 成功或空白轉錄後立即刪 WAV；失敗 WAV 仍保留 |
-| `summary.model` | `gpt-5.6-luna` | 可自行替換的文字摘要模型 |
+| `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
+| `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
+| `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
 | `summary.hour` / `minute` | `0` / `10` | LaunchAgent 每日時間；修改後重跑安裝摘要腳本 |
-
-`gpt-5.6-luna` 是目前官方定位給成本敏感、高量工作負載的選項；如需不同品質／成本取捨，參考 [OpenAI model catalog](https://developers.openai.com/api/docs/models)。
 
 ## 每日純文字摘要
 
-把 API key 存進 Keychain。下列做法不會把 key 本身寫進 shell history：
+先用官方 Codex CLI 打開瀏覽器登入 ChatGPT；這是一次性的互動步驟：
 
 ```bash
-read -s OPENAI_API_KEY
-security add-generic-password -U \
-  -a "$USER" \
-  -s familyrecorder-openai \
-  -w "$OPENAI_API_KEY"
-unset OPENAI_API_KEY
+codex login
+codex login status
 ```
+
+若只安裝 ChatGPT macOS app，FamilyRecorder 也會自動尋找 app 內附的官方 Codex。`doctor` 應顯示 `ChatGPT login: Logged in using ChatGPT`。登入由 Codex 自己保存與更新；FamilyRecorder 不會開啟其認證檔，更不會把 token 放進 YAML、plist 或 log。
 
 手動驗證指定日期：
 
@@ -159,9 +159,9 @@ unset OPENAI_API_KEY
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" summary --date 2026-08-09
 ```
 
-摘要使用官方 Python SDK 的 `client.responses.create(...)` 與 `response.output_text`。參考：[OpenAI Python SDK](https://github.com/openai/openai-python)、[Responses API 文字指南](https://developers.openai.com/api/docs/guides/text)。
+摘要使用官方非互動模式 `codex exec`。每次執行固定為 `--ephemeral`、`--sandbox read-only`，在新的空白暫存目錄內工作，且不載入使用者 MCP／專案規則；prompt 也要求不得呼叫工具或遵循逐字稿內的指令。參考：[Codex 登入](https://learn.chatgpt.com/docs/auth)、[Codex 非互動模式](https://learn.chatgpt.com/docs/non-interactive-mode)。
 
-隱私邊界是程式結構上的限制：`summary` 指令只開啟 `transcripts/YYYY-MM-DD.md`，不會讀取 `audio/`。若逐字稿超過 `summary.max_input_chars`，仍只分段上傳文字。請注意，逐字稿本身可能包含敏感內容；啟用前應先檢視 prompt、供應商資料政策與家庭共識。
+隱私邊界是程式結構上的限制：`summary` 指令只開啟 `transcripts/YYYY-MM-DD.md`，不會讀取 `audio/`。逐字稿透過 stdin 傳給 Codex，不出現在 process arguments；若超過 `summary.max_input_chars`，仍只分段傳送文字。請注意，逐字稿本身可能包含敏感內容；啟用前應先檢視 prompt、ChatGPT 資料設定與家庭共識。
 
 ## 安裝常駐工作
 
@@ -270,7 +270,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 6. 拔掉 XVF3800，listener log 顯示 retry；插回後恢復。
 7. 把 `keep_audio_days` 暫設為 0，執行 `cleanup` 可移除舊 WAV，不動逐字稿。
 8. 手動 `summary --date ...` 只產生 Markdown summary，雲端程式路徑未讀 WAV。
-9. plist 中沒有 API key；刪除 Keychain item 後摘要會明確失敗而非匿名 fallback。
+9. `codex login status` 與 `doctor` 都顯示 ChatGPT 已登入；YAML、plist、環境變數與 Python dependencies 均沒有 OpenAI API key。
 10. 重開機／重新登入後兩個 `launchctl print` 工作存在。
 11. A/B/C placement report 有每句轉錄、RMS、SNR、speech ratio、CER 與彙總表。
 12. `ruff check .` 與 `pytest` 全數通過。
@@ -287,4 +287,4 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 **Whisper 變慢或發熱**：把模型改成 `medium` 或 `small` 並更新 YAML；不要只增加 threads。確認安裝輸出包含 Metal，且 `doctor` 指向正確 build。
 
-**摘要沒有執行**：先手動跑相同 `summary` 指令；檢查 Keychain 的 service/account、逐字稿日期、網路與 `summary.error.log`。排程預設在 00:10 整理「昨天」。
+**摘要沒有執行**：先跑 `codex login status` 與相同的手動 `summary` 指令；再檢查逐字稿日期、網路與 `summary.error.log`。若登入失效，互動執行 `codex login`。排程預設在 00:10 整理「昨天」。

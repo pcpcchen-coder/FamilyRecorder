@@ -50,3 +50,10 @@ def test_load_config_validates_vad_frame_size(tmp_path: Path) -> None:
     config_file.write_text("vad:\n  frame_ms: 25\n", encoding="utf-8")
     with pytest.raises(ValueError, match="frame_ms"):
         load_config(config_file)
+
+
+def test_load_config_rejects_api_summary_provider(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("summary:\n  provider: openai\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="provider must be 'codex'"):
+        load_config(config_file)

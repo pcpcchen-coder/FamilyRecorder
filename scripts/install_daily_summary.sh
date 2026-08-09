@@ -13,6 +13,17 @@ if [[ ! -x "$PROGRAM" || ! -f "$CONFIG_PATH" ]]; then
   exit 1
 fi
 
+"$RUNTIME_ROOT/venv/bin/python" - "$CONFIG_PATH" <<'PY'
+import sys
+from family_recorder.config import load_config
+from family_recorder.summary import check_codex_login, resolve_codex_binary
+
+config = load_config(sys.argv[1])
+binary = resolve_codex_binary(config.summary.codex_binary_path)
+print(f"Using Codex: {binary}")
+print(check_codex_login(config.summary, binary=binary))
+PY
+
 read -r HOUR MINUTE < <(
   "$RUNTIME_ROOT/venv/bin/python" - "$CONFIG_PATH" <<'PY'
 import sys
@@ -33,12 +44,13 @@ PY
 
 mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 "$RUNTIME_ROOT/venv/bin/python" - \
-  "$TEMPLATE" "$PLIST" "$PROGRAM" "$CONFIG_PATH" "$LOG_DIR" "$HOUR" "$MINUTE" <<'PY'
+  "$TEMPLATE" "$PLIST" "$PROGRAM" "$CONFIG_PATH" "$LOG_DIR" "$HOUR" "$MINUTE" \
+  "$HOME" <<'PY'
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-template, target, program, config, log_dir, hour, minute = sys.argv[1:]
+template, target, program, config, log_dir, hour, minute, home = sys.argv[1:]
 text = Path(template).read_text(encoding="utf-8")
 for marker, value in {
     "__PROGRAM__": program,
@@ -46,6 +58,7 @@ for marker, value in {
     "__LOG_DIR__": log_dir,
     "__HOUR__": hour,
     "__MINUTE__": minute,
+    "__HOME__": home,
 }.items():
     text = text.replace(marker, escape(value))
 Path(target).write_text(text, encoding="utf-8")

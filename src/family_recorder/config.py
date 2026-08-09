@@ -58,13 +58,13 @@ DEFAULT_SUMMARY_PROMPT = """\
 @dataclass(frozen=True)
 class SummaryConfig:
     enabled: bool = True
-    provider: str = "openai"
-    model: str = "gpt-5.6-luna"
+    provider: str = "codex"
+    model: str = ""
+    codex_binary_path: str = "codex"
+    timeout_seconds: int = 900
     hour: int = 0
     minute: int = 10
     max_input_chars: int = 300_000
-    keychain_service: str = "familyrecorder-openai"
-    keychain_account: str | None = None
     prompt: str = DEFAULT_SUMMARY_PROMPT
 
 
@@ -165,3 +165,7 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:
         raise ValueError("summary.max_input_chars must be at least 1000")
+    if config.summary.provider != "codex":
+        raise ValueError("summary.provider must be 'codex'")
+    if config.summary.timeout_seconds < 30:
+        raise ValueError("summary.timeout_seconds must be at least 30")

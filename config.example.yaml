@@ -32,14 +32,17 @@ storage:
 
 summary:
   enabled: true
-  provider: "openai"
-  model: "gpt-5.6-luna"
+  # Uses the official Codex CLI and its saved "Sign in with ChatGPT" session.
+  # No OpenAI API key is read or accepted by FamilyRecorder.
+  provider: "codex"
+  # Empty means the default model available to the signed-in ChatGPT account.
+  model: ""
+  # "codex" searches PATH and common macOS locations, including ChatGPT.app.
+  codex_binary_path: "codex"
+  timeout_seconds: 900
   hour: 0
   minute: 10
   max_input_chars: 300000
-  keychain_service: "familyrecorder-openai"
-  # null means the current macOS login account.
-  keychain_account: null
   prompt: |
     你是家庭聲音日誌整理助手。輸入是本地端語音辨識產生的逐段文字，
     可能有錯字、重複、背景音或無意義片段。只根據逐字稿內容整理，
