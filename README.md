@@ -202,7 +202,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 安裝後，右上角會出現波形圓形圖示；暫停時變成 pause 圖示，listener 異常則顯示警告圖示。點開後可使用：
 
 - 顯示「錄音中／已暫停／服務未執行」、目前 Whisper 與摘要模型。
-- 暫停 15 分鐘、1 小時或直到手動恢復；在目前 30 秒 chunk 結束前按下暫停時，該 chunk 會丟棄而不保存。
+- 暫停 15 分鐘、1 小時或直到手動恢復；listener 每秒檢查一次，約 1 秒內關閉麥克風串流，當下未完成的 chunk 會丟棄而不保存。
 - 快速開啟今天的逐字稿／摘要，以及全部資料、音訊、log、設定檔。
 - 從實際已下載的 `ggml-*.bin` 清單切換本機 Whisper；切換後會重啟 listener。
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。

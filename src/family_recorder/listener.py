@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from family_recorder.audio import AudioChunk, AudioRecorder, write_wav
+from family_recorder.audio import AudioChunk, AudioRecorder, CaptureInterrupted, write_wav
 from family_recorder.config import AppConfig
 from family_recorder.control import ControlStateError, read_pause_state
 from family_recorder.metrics import AudioAnalysis, analyze_audio
@@ -17,6 +17,14 @@ LOGGER = logging.getLogger(__name__)
 
 def _format_optional(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1f}"
+
+
+def _pause_requested(config: AppConfig) -> bool:
+    try:
+        return read_pause_state(config.storage.data_dir).paused
+    except ControlStateError as exc:
+        LOGGER.error("%s; ignoring pause state", exc)
+        return False
 
 
 def _transcribe_segment(
@@ -114,14 +122,13 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                         config.audio.sample_rate,
                     )
                     while True:
-                        chunk = recorder.read_chunk(stream)
                         try:
-                            pause_state = read_pause_state(config.storage.data_dir)
-                        except ControlStateError as exc:
-                            LOGGER.error("%s; ignoring pause state", exc)
-                            pause_state = None
-                        if pause_state is not None and pause_state.paused:
-                            LOGGER.info("Pause activated; discarding the in-progress chunk")
+                            chunk = recorder.read_chunk(
+                                stream,
+                                stop_requested=lambda: _pause_requested(config),
+                            )
+                        except CaptureInterrupted:
+                            LOGGER.info("Pause activated; discarded the in-progress chunk")
                             pause_was_logged = True
                             break
                         processed += 1

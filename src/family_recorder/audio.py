@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import wave
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,6 +21,10 @@ class AudioChunk:
     started_at: datetime
     ended_at: datetime
     overflowed: bool = False
+
+
+class CaptureInterrupted(RuntimeError):
+    """Raised when an in-progress capture should stop without producing a chunk."""
 
 
 def downmix_pcm16(pcm: bytes, channels: int) -> bytes:
@@ -100,7 +104,12 @@ class AudioRecorder:
         ) as stream:
             yield stream
 
-    def read_chunk(self, stream: Any, seconds: int | float | None = None) -> AudioChunk:
+    def read_chunk(
+        self,
+        stream: Any,
+        seconds: int | float | None = None,
+        stop_requested: Callable[[], bool] | None = None,
+    ) -> AudioChunk:
         duration = seconds if seconds is not None else self.config.chunk_seconds
         target_frames = max(1, round(self.capture_sample_rate * duration))
         frames_left = target_frames
@@ -110,11 +119,16 @@ class AudioRecorder:
         started_at = datetime.now().astimezone()
 
         while frames_left:
+            if stop_requested is not None and stop_requested():
+                raise CaptureInterrupted("Capture interrupted by listener control state")
             request = min(frames_left, self.capture_sample_rate)
             data, block_overflowed = stream.read(request)
             blocks.append(bytes(data))
             overflowed = overflowed or bool(block_overflowed)
             frames_left -= request
+
+        if stop_requested is not None and stop_requested():
+            raise CaptureInterrupted("Capture interrupted by listener control state")
 
         mono = downmix_pcm16(b"".join(blocks), channels)
         mono = resample_pcm16(mono, self.capture_sample_rate, self.config.sample_rate)

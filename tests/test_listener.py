@@ -42,7 +42,7 @@ def test_capture_continues_while_previous_chunk_is_transcribed(
         def open_stream(self):
             yield object()
 
-        def read_chunk(self, _stream) -> AudioChunk:
+        def read_chunk(self, _stream, **_kwargs) -> AudioChunk:
             self.calls += 1
             if self.calls == 2:
                 assert transcription_started.wait(timeout=2)

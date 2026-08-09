@@ -2,8 +2,15 @@ import wave
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from family_recorder.audio import AudioRecorder, downmix_pcm16, resample_pcm16, write_wav
+from family_recorder.audio import (
+    AudioRecorder,
+    CaptureInterrupted,
+    downmix_pcm16,
+    resample_pcm16,
+    write_wav,
+)
 from family_recorder.config import AudioConfig, VadConfig
 from family_recorder.metrics import analyze_audio, rms_dbfs
 
@@ -47,6 +54,10 @@ class FakeSoundDevice:
     def __exit__(self, *_args: object) -> None:
         return None
 
+    @staticmethod
+    def read(frames: int) -> tuple[bytes, bool]:
+        return (b"\0" * frames * 2, False)
+
 
 def _tone(sample_rate: int, seconds: float, amplitude: int = 10_000) -> bytes:
     time = np.arange(round(sample_rate * seconds)) / sample_rate
@@ -83,6 +94,22 @@ def test_recorder_uses_portaudio_native_block_size() -> None:
         pass
 
     assert sounddevice.stream_options["blocksize"] == 0
+
+
+def test_recorder_checks_pause_between_one_second_blocks() -> None:
+    sounddevice = FakeSoundDevice()
+    recorder = AudioRecorder(AudioConfig(chunk_seconds=30), sd_module=sounddevice)
+    checks = 0
+
+    def stop_requested() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks == 2
+
+    with recorder.open_stream() as stream, pytest.raises(CaptureInterrupted):
+        recorder.read_chunk(stream, stop_requested=stop_requested)
+
+    assert checks == 2
 
 
 def test_analysis_combines_rms_and_vad() -> None:
