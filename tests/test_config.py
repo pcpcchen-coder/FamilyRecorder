@@ -1,0 +1,52 @@
+from pathlib import Path
+
+import pytest
+
+from family_recorder.config import load_config
+
+
+def test_load_config_expands_paths_and_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """
+audio:
+  device_name_contains: XMOS
+storage:
+  data_dir: ~/family-data
+whisper:
+  binary_path: ~/bin/whisper-cli
+  model_path: ~/models/model.bin
+""",
+        encoding="utf-8",
+    )
+    config = load_config(config_file)
+    assert config.audio.device_name_contains == "XMOS"
+    assert config.audio.chunk_seconds == 30
+    assert config.storage.data_dir == (tmp_path / "family-data").resolve()
+    assert config.whisper.binary_path == (tmp_path / "bin/whisper-cli").resolve()
+
+
+def test_load_config_rejects_unknown_key(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("audio:\n  mystery: true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Unknown AudioConfig keys"):
+        load_config(config_file)
+
+
+def test_default_paths_are_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("{}\n", encoding="utf-8")
+    config = load_config(config_file)
+    assert str(config.storage.data_dir).startswith(str(tmp_path))
+    assert "~" not in str(config.whisper.binary_path)
+
+
+def test_load_config_validates_vad_frame_size(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("vad:\n  frame_ms: 25\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="frame_ms"):
+        load_config(config_file)
