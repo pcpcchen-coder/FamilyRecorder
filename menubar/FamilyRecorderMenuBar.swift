@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 struct WhisperModel: Decodable {
@@ -570,6 +571,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func enrollSpeaker(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
+        requestMicrophoneAccess { [weak self] granted in
+            guard let self else { return }
+            if granted {
+                self.beginSpeakerEnrollment(name)
+            } else {
+                self.showMicrophonePermissionAlert()
+            }
+        }
+    }
+
+    private func requestMicrophoneAccess(completion: @escaping (Bool) -> Void) {
+        NSApp.activate(ignoringOtherApps: true)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            completion(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    completion(granted)
+                }
+            }
+        case .denied, .restricted:
+            completion(false)
+        @unknown default:
+            completion(false)
+        }
+    }
+
+    private func showMicrophonePermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "FamilyRecorder 需要麥克風權限"
+        alert.informativeText =
+            "請在「系統設定 → 隱私權與安全性 → 麥克風」允許 FamilyRecorder，然後重新錄製聲音樣本。"
+        alert.addButton(withTitle: "打開系統設定")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(
+               string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+           )
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func beginSpeakerEnrollment(_ name: String) {
         let alert = NSAlert()
         alert.messageText = "建立 \(name) 的聲音樣本"
         alert.informativeText =

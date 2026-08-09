@@ -33,7 +33,7 @@ PY
 )"
 
 mkdir -p "$APP_ROOT/Contents/MacOS" "$HOME/Library/LaunchAgents" "$LOG_DIR"
-xcrun swiftc -O -swift-version 5 -framework AppKit \
+xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation \
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
