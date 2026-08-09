@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -45,6 +46,24 @@ TIME_OUTPUT_CONTRACT = """\
 - 確實無法對應來源時間的項目標示 `時間不明`；不要省略時間欄位。
 """
 
+SPEAKER_OUTPUT_CONTRACT = """\
+家庭人別規則（所有摘要請固定遵守）：
+- 原始逐字稿的段落標題可能含 `可能：姓名（相似度）`、`人別：可能多人` 或
+  `人別：不確定`；這是該 30 秒片段的本機近似人別，不是身分驗證。
+- 事件時間軸、重要消息、決策、承諾、待辦與值得追蹤的想法，只要來源標題有人別，
+  都要保留為 `可能說話者：姓名`；不要因濃縮或去重而把人別省略。
+- 另輸出 `## 家庭成員重點（依可能說話者）`，按逐字稿實際出現的姓名整理重要內容；
+  `可能多人`、`不確定` 與沒有標記的內容分開列出，不得硬分配給某位成員。
+- 同一事件跨越多個人別片段時，可列多位可能說話者或標示可能多人；不可任選一人。
+- 人別標記只適用於它所在的片段，不得把姓名延伸套用到其他沒有標記的片段。
+- 待辦的「可能說話者」與「負責人」是不同欄位；只有逐字稿明確指派時才能填負責人，
+  不得假設說話者就是負責人。
+- 相似度是本機特徵相似程度，不是身分機率。摘要可省略百分比，但必須保留「可能」語氣，
+  不得寫成已確認某人說過或做過某事。
+"""
+
+TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
+
 
 def previous_local_date(now: datetime | None = None) -> date:
     now = now or datetime.now().astimezone()
@@ -74,6 +93,32 @@ def split_text(text: str, max_chars: int) -> list[str]:
     if current:
         chunks.append("".join(current))
     return chunks
+
+
+def split_transcript(text: str, max_chars: int) -> list[str]:
+    """Split at transcript headings so time and speaker context stay with their text."""
+    if len(text) <= max_chars:
+        return [text]
+    starts = [match.start() for match in TRANSCRIPT_SEGMENT.finditer(text)]
+    if not starts:
+        return split_text(text, max_chars)
+
+    preamble = text[: starts[0]]
+    segments = [
+        text[start : starts[index + 1] if index + 1 < len(starts) else len(text)]
+        for index, start in enumerate(starts)
+    ]
+    parts: list[str] = []
+    current = preamble + segments[0]
+    for segment in segments[1:]:
+        if current and len(current) + len(segment) > max_chars:
+            parts.append(current)
+            current = segment
+        else:
+            current += segment
+    if current:
+        parts.append(current)
+    return [part for part in parts if part.strip()]
 
 
 def resolve_codex_binary(configured: str) -> Path:
@@ -134,7 +179,8 @@ class DailySummaryRunner:
 
     def _request(self, instructions: str, content: str) -> str:
         prompt = (
-            f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n{DATA_BOUNDARY}\n\n"
+            f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
+            f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DATA_BOUNDARY}\n\n"
             "--- FAMILYRECORDER TEXT START ---\n"
             f"{content.strip()}\n"
             "--- FAMILYRECORDER TEXT END ---\n"
@@ -199,7 +245,7 @@ class DailySummaryRunner:
             if not transcript:
                 raise SummaryError(f"Transcript for {target_date.isoformat()} is empty")
 
-            parts = split_text(transcript, self.config.summary.max_input_chars)
+            parts = split_transcript(transcript, self.config.summary.max_input_chars)
             if len(parts) == 1:
                 summary = self._request(
                     self.config.summary.prompt,

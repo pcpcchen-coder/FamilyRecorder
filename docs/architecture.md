@@ -16,6 +16,8 @@ When household speakers are enabled, the same in-memory PCM is divided into shor
 
 Transcript headings carry local chunk ranges such as `19:40:00–19:40:30`. A mandatory time-output contract is appended in code independently of the configurable summary prompt. It requires minute-level approximate timestamps, a chronological event timeline, explicit `時間不明` markers, and forbids replacing source time with summary-generation time. The same contract is present in every partial request and the final merge, so chunking cannot silently discard chronology.
 
+The same request path appends an independent speaker-output contract. When a heading carries `可能：name`, `可能多人`, or `不確定`, important timeline events, news, decisions, commitments, tasks, and ideas retain that attribution with explicitly uncertain wording. A separate household-member section groups relevant content by possible speaker. Speaker and task owner remain distinct, and unlabeled or mixed chunks cannot be assigned to a person. Long transcripts split only between complete `### time — speaker` segments, so partial summarization cannot detach speech from its local time/speaker heading; the final merge receives the contract again.
+
 Each Codex invocation uses an ephemeral session, a read-only sandbox, an empty temporary working directory, and ignores user config and project rules. The prompt treats transcript content as untrusted and disallows tool use. The summary runner has no audio decoding or upload implementation. This makes the “text only” boundary testable rather than relying on a prompt instruction.
 
 ## Scheduled processes
