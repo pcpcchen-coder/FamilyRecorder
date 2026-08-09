@@ -35,7 +35,7 @@ XVF3800 / XMOS UAC2
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；過長逐字稿會分段整理後再去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
-- 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、切換 Whisper／摘要模型、立即摘要、重啟與系統檢查。
+- 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
 XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)。
@@ -221,12 +221,22 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 暫停 15 分鐘、1 小時或直到手動恢復；listener 每秒檢查一次，約 1 秒內關閉麥克風串流，當下未完成的 chunk 會丟棄而不保存。
 - 快速開啟今天的逐字稿／摘要，以及全部資料、音訊、log、設定檔。
 - 從實際已下載的 `ggml-*.bin` 清單切換本機 Whisper；切換後會重啟 listener。
+- 在「本機 Whisper → 下載其他模型…」依標準、量化省空間、舊版相容三組直接下載新的多語模型；會顯示預估容量，支援失敗後續傳，完成 GGML 格式驗證後才切換並重啟 listener，原有模型不會刪除。
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
 
 暫停狀態存在 `data_dir/control.json`，不是只存在 UI 記憶體；因此選單列程式重啟不會意外恢復錄音，定時暫停到期則由 listener 自動恢復。選「結束選單列程式」只會關閉圖示，不會停止 listener；重新登入或重跑安裝腳本即可再次顯示。
 
-停止並移除兩個 LaunchAgent（不刪逐字稿、SQLite、WAV、config 或 runtime）：
+下載清單對應專案固定使用的 whisper.cpp v1.8.1 官方模型清單。FamilyRecorder 預設為中文，因此不顯示 `.en` 英文限定版；可選 Tiny、Base、Small、Medium、Large v1/v2/v3、Large v3 Turbo 及其多語 Q5／Q8 量化版本。模型從 whisper.cpp 官方下載腳本指定的 Hugging Face repository 取得，名稱經 allowlist 驗證，未完成的檔案以 `.partial` 保存供下次續傳。
+
+也可使用指令下載並切換，例如：
+
+```bash
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" \
+  download-whisper-model --model small-q5_1
+```
+
+停止並移除三個 LaunchAgent（不刪逐字稿、SQLite、WAV、config 或 runtime）：
 
 ```bash
 ./scripts/uninstall_launchd.sh

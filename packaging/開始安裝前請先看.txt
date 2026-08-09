@@ -1,4 +1,4 @@
-FamilyRecorder 0.4.0 — Apple Silicon 安裝說明
+FamilyRecorder 0.4.1 — Apple Silicon 安裝說明
 ================================================
 
 1. 雙擊「安裝 FamilyRecorder.app」。
@@ -9,6 +9,8 @@ FamilyRecorder 0.4.0 — Apple Silicon 安裝說明
 3. 按「登入 ChatGPT」完成官方 Codex 網頁登入。FamilyRecorder 不會讀取或保存 token。
 4. 按「安裝 FamilyRecorder」；安裝器會下載模型、以 Metal 編譯 whisper.cpp，並啟用錄音、選單列與每日摘要。
 5. 接上 XVF3800，依 macOS 提示允許麥克風權限。
+
+安裝後若要增加或切換模型，可點選單列波形圖示 →「更換模型」→「本機 Whisper」→「下載其他模型…」。新模型下載驗證完成後才會切換，原有模型不會刪除。
 
 系統需求
 --------

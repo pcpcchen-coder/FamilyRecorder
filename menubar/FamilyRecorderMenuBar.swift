@@ -6,6 +6,24 @@ struct WhisperModel: Decodable {
     let path: String
 }
 
+struct DownloadableWhisperModel: Decodable {
+    let name: String
+    let displayName: String
+    let sizeLabel: String
+    let category: String
+    let description: String
+    let installed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case displayName = "display_name"
+        case sizeLabel = "size_label"
+        case category
+        case description
+        case installed
+    }
+}
+
 struct RecorderStatus: Decodable {
     let paused: Bool
     let pauseLabel: String
@@ -21,6 +39,7 @@ struct RecorderStatus: Decodable {
     let currentWhisperModel: String
     let currentWhisperModelPath: String
     let whisperModels: [WhisperModel]
+    let downloadableWhisperModels: [DownloadableWhisperModel]
     let summaryModel: String
 
     enum CodingKeys: String, CodingKey {
@@ -38,6 +57,7 @@ struct RecorderStatus: Decodable {
         case currentWhisperModel = "current_whisper_model"
         case currentWhisperModelPath = "current_whisper_model_path"
         case whisperModels = "whisper_models"
+        case downloadableWhisperModels = "downloadable_whisper_models"
         case summaryModel = "summary_model"
     }
 }
@@ -48,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private var currentStatus: RecorderStatus?
+    private var downloadingWhisperModel: DownloadableWhisperModel?
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
 
@@ -149,7 +170,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             currentStatus = try JSONDecoder().decode(RecorderStatus.self, from: data)
             guard let status = currentStatus else { return }
             let symbol: String
-            if !status.listenerRunning {
+            if let download = downloadingWhisperModel {
+                symbol = "arrow.down.circle.fill"
+                updateStatusIcon(symbol: symbol, tooltip: "正在下載 \(download.displayName)")
+                if rebuildMenu {
+                    buildMenu(status)
+                }
+                return
+            } else if !status.listenerRunning {
                 symbol = "exclamationmark.triangle.fill"
             } else if status.paused {
                 symbol = "pause.circle.fill"
@@ -258,6 +286,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 whisperMenu.addItem(modelItem)
             }
         }
+        whisperMenu.addItem(.separator())
+        let downloadItem = item("下載其他模型…")
+        let downloadMenu = NSMenu()
+        if let download = downloadingWhisperModel {
+            downloadMenu.addItem(item("正在下載 \(download.displayName)…", enabled: false))
+        } else {
+            for category in ["標準模型", "量化省空間", "舊版相容"] {
+                let categoryItem = item(category)
+                let categoryMenu = NSMenu()
+                for model in status.downloadableWhisperModels where model.category == category {
+                    let suffix = model.installed ? "（已安裝）" : ""
+                    let modelItem = item(
+                        "\(model.displayName) · \(model.sizeLabel)\(suffix)",
+                        action: model.installed ? nil : #selector(downloadWhisperModel),
+                        representedObject: model,
+                        enabled: !model.installed
+                    )
+                    modelItem.toolTip = model.description
+                    if model.installed {
+                        modelItem.state = .on
+                    }
+                    categoryMenu.addItem(modelItem)
+                }
+                categoryItem.submenu = categoryMenu
+                downloadMenu.addItem(categoryItem)
+            }
+        }
+        downloadItem.submenu = downloadMenu
+        whisperMenu.addItem(downloadItem)
         whisperItem.submenu = whisperMenu
         modelMenu.addItem(whisperItem)
 
@@ -338,6 +395,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.refreshStatus(rebuildMenu: true)
             if restart.0 != 0 {
                 self?.showAlert(title: "模型已儲存，但服務重啟失敗", message: restart.1)
+            }
+        }
+    }
+
+    @objc private func downloadWhisperModel(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? DownloadableWhisperModel else { return }
+        let alert = NSAlert()
+        alert.messageText = "下載並切換到 \(model.displayName)？"
+        alert.informativeText =
+            "預估下載容量：\(model.sizeLabel)\n\(model.description)。下載期間仍使用目前模型錄音；完成後才會切換並重新啟動錄音服務。既有模型不會刪除。"
+        alert.addButton(withTitle: "下載並切換")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        downloadingWhisperModel = model
+        updateStatusIcon(symbol: "arrow.down.circle.fill", tooltip: "正在下載 \(model.displayName)")
+        refreshStatus(rebuildMenu: true)
+        runRecorderAsync(["download-whisper-model", "--model", model.name]) {
+            [weak self] status, output in
+            guard let self else { return }
+            self.downloadingWhisperModel = nil
+            guard status == 0 else {
+                self.refreshStatus(rebuildMenu: true)
+                self.showAlert(title: "模型下載失敗", message: output)
+                return
+            }
+            let restart = self.restartListener()
+            self.refreshStatus(rebuildMenu: true)
+            if restart.0 == 0 {
+                self.showAlert(
+                    title: "模型已下載並切換",
+                    message: "目前使用 \(model.displayName)。原有模型仍保留，可隨時切回。"
+                )
+            } else {
+                self.showAlert(title: "模型已切換，但服務重啟失敗", message: restart.1)
             }
         }
     }

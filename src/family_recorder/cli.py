@@ -15,6 +15,7 @@ from family_recorder.config_editor import update_yaml_scalar
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
 from family_recorder.listener import run_listener, validate_runtime_paths
+from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
 from family_recorder.storage import Storage
 from family_recorder.summary import (
@@ -52,6 +53,10 @@ def _parser() -> argparse.ArgumentParser:
         "set-whisper-model", help="Select an already-downloaded whisper.cpp model"
     )
     whisper_model.add_argument("--path", type=Path, required=True)
+    download_model = commands.add_parser(
+        "download-whisper-model", help="Download, verify, and select a multilingual model"
+    )
+    download_model.add_argument("--model", required=True)
     summary_model = commands.add_parser(
         "set-summary-model", help="Select a Codex summary model; empty uses the account default"
     )
@@ -139,6 +144,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "whisper_models": [
             {"name": _model_name(path), "path": str(path.resolve())} for path in model_paths
         ],
+        "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
     }
 
@@ -178,6 +184,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "whisper", "model_path", str(model_path)
             )
             print(f"Whisper model: {_model_name(model_path)}")
+            return 0
+        if args.command == "download-whisper-model":
+            model_path, downloaded = download_whisper_model(config, args.model)
+            update_yaml_scalar(
+                args.config.expanduser().resolve(), "whisper", "model_path", str(model_path)
+            )
+            action = "Downloaded and selected" if downloaded else "Selected existing"
+            print(f"{action} Whisper model: {_model_name(model_path)}")
             return 0
         if args.command == "set-summary-model":
             update_yaml_scalar(
