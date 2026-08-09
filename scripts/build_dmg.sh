@@ -75,6 +75,9 @@ hdiutil create \
   -ov \
   "$DMG_PATH"
 
-shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+(
+  cd "$DIST_ROOT"
+  shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$CHECKSUM_PATH")"
+)
 echo "DMG: $DMG_PATH"
 echo "SHA-256: $CHECKSUM_PATH"
