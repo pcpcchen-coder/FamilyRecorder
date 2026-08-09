@@ -90,6 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var currentStatus: RecorderStatus?
     private var downloadingWhisperModel: DownloadableWhisperModel?
     private var enrollingSpeakerName: String?
+    private var enrollmentPanel: NSPanel?
+    private var enrollmentStatusLabel: NSTextField?
+    private var enrollmentProgress: NSProgressIndicator?
+    private var enrollmentTimer: Timer?
+    private var enrollmentStartedAt: Date?
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
 
@@ -568,7 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = "建立 \(name) 的聲音樣本"
         alert.informativeText =
-            "按下開始後有 2 秒準備時間，接著請靠近平常的收音位置，自然連續說話 15 秒。\n\n可朗讀：今天是我的聲音樣本，我正在家裡使用 FamilyRecorder。請記住我的聲音，但不需要保存這段錄音。\n\n錄音只用來產生本機聲音特徵，原始註冊音訊不會保存。"
+            "按下開始後會出現持續顯示的朗讀視窗。先有 2 秒準備時間，接著請靠近平常的收音位置，自然連續說話 15 秒。\n\n錄音只用來產生本機聲音特徵，原始註冊音訊不會保存。"
         alert.addButton(withTitle: "開始")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)
@@ -583,6 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         enrollingSpeakerName = name
+        showEnrollmentPanel(for: name)
         updateStatusIcon(symbol: "person.2.fill", tooltip: "正在建立 \(name) 的聲音樣本")
         refreshStatus(rebuildMenu: true)
         runRecorderAsync(["enroll-speaker", "--name", name, "--seconds", "15", "--delay", "2"]) {
@@ -591,6 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if shouldResume {
                 _ = self.runRecorderSync(["resume"])
             }
+            self.closeEnrollmentPanel()
             self.enrollingSpeakerName = nil
             self.refreshStatus(rebuildMenu: true)
             self.showAlert(
@@ -598,6 +605,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 message: output
             )
         }
+    }
+
+    private func showEnrollmentPanel(for name: String) {
+        closeEnrollmentPanel()
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "FamilyRecorder 聲音樣本"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView = content
+
+        let title = NSTextField(labelWithString: "請 \(name) 持續朗讀")
+        title.font = .boldSystemFont(ofSize: 21)
+
+        let instruction = NSTextField(
+            wrappingLabelWithString:
+                "請以自然音量、平常說話的速度朗讀。句子唸完後可從頭再唸，直到畫面顯示錄音完成。"
+        )
+        instruction.font = .systemFont(ofSize: 14)
+        instruction.textColor = .secondaryLabelColor
+
+        let sample = NSTextField(
+            wrappingLabelWithString:
+                "今天是我的聲音樣本，我正在家裡使用 FamilyRecorder。請記住我的聲音，但不需要保存這段錄音。"
+        )
+        sample.font = .systemFont(ofSize: 18, weight: .medium)
+        sample.isSelectable = true
+        sample.drawsBackground = true
+        sample.backgroundColor = .controlBackgroundColor
+        sample.isBezeled = true
+        sample.bezelStyle = .roundedBezel
+
+        let status = NSTextField(labelWithString: "")
+        status.font = .boldSystemFont(ofSize: 16)
+        status.alignment = .center
+
+        let progress = NSProgressIndicator()
+        progress.isIndeterminate = false
+        progress.minValue = 0
+        progress.maxValue = 17
+        progress.doubleValue = 0
+        progress.controlSize = .regular
+
+        let privacy = NSTextField(
+            wrappingLabelWithString:
+                "原始註冊音訊不會保存；完成後只留下這台 Mac 上的聲音特徵。"
+        )
+        privacy.font = .systemFont(ofSize: 12)
+        privacy.textColor = .secondaryLabelColor
+        privacy.alignment = .center
+
+        let stack = NSStackView(views: [title, instruction, sample, status, progress, privacy])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+
+        for view in [title, instruction, sample, status, progress, privacy] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        sample.heightAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
+        ])
+
+        enrollmentPanel = panel
+        enrollmentStatusLabel = status
+        enrollmentProgress = progress
+        enrollmentStartedAt = Date()
+        updateEnrollmentProgress()
+        enrollmentTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) {
+            [weak self] _ in
+            self?.updateEnrollmentProgress()
+        }
+        panel.center()
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func updateEnrollmentProgress() {
+        guard let startedAt = enrollmentStartedAt else { return }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        enrollmentProgress?.doubleValue = min(17, elapsed)
+        if elapsed < 2 {
+            let remaining = max(1, Int(ceil(2 - elapsed)))
+            enrollmentStatusLabel?.stringValue = "準備中：\(remaining) 秒後開始錄音"
+            enrollmentStatusLabel?.textColor = .secondaryLabelColor
+        } else if elapsed < 17 {
+            let remaining = max(1, Int(ceil(17 - elapsed)))
+            enrollmentStatusLabel?.stringValue = "● 正在錄音，剩餘 \(remaining) 秒"
+            enrollmentStatusLabel?.textColor = .systemRed
+        } else {
+            enrollmentStatusLabel?.stringValue = "錄音完成，正在建立聲音特徵…"
+            enrollmentStatusLabel?.textColor = .systemBlue
+        }
+    }
+
+    private func closeEnrollmentPanel() {
+        enrollmentTimer?.invalidate()
+        enrollmentTimer = nil
+        enrollmentStartedAt = nil
+        enrollmentPanel?.orderOut(nil)
+        enrollmentPanel = nil
+        enrollmentStatusLabel = nil
+        enrollmentProgress = nil
     }
 
     @objc private func deleteSpeakerProfile(_ sender: NSMenuItem) {
