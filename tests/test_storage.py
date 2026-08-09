@@ -17,6 +17,7 @@ def test_segment_is_written_to_markdown_and_sqlite(tmp_path: Path) -> None:
     config = StorageConfig(data_dir=tmp_path)
 
     with Storage(config) as storage:
+        assert (tmp_path / ".familyrecorder-data").is_file()
         audio_path = storage.audio_path_for(started)
         write_wav(audio_path, chunk.pcm16_mono, chunk.sample_rate)
         row_id = storage.save_segment(chunk, audio_path, analysis, "明天記得拿包裹。")

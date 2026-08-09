@@ -24,13 +24,19 @@ Each Codex invocation uses an ephemeral session, a read-only sandbox, an empty t
 - `com.familyrecorder.summary`: `StartCalendarInterval`, with hour/minute read from YAML when the plist is installed.
 - `com.familyrecorder.menubar`: native AppKit status item, started in the Aqua login session and restarted only after unexpected exits.
 
-Both are per-user LaunchAgents, not root daemons. No API key or Codex token is placed in launchd environment variables; the summary job only provides `HOME` so the official CLI can locate its own saved login.
+All three are per-user LaunchAgents, not root daemons. No API key or Codex token is placed in launchd environment variables; the summary job only provides `HOME` so the official CLI can locate its own saved login.
 
 ## Menu bar control path
 
 The Swift menu bar app invokes the installed `family-recorder` CLI for status, pause/resume, targeted YAML edits, summaries, diagnostics, and intentional speaker enrollment. Enrollment temporarily pauses the listener, opens the microphone through the same Python capture path, retains PCM only in memory until features are saved, and resumes only if the menu itself initiated the pause. Pause state is atomically persisted as `data_dir/control.json`; the listener checks it before opening a stream and during capture. A chunk overlapping a newly requested pause is discarded.
 
 Whisper model choices are discovered from already-downloaded `ggml-*.bin` files. Targeted config edits preserve unrelated YAML comments and values. Switching the local model requires a listener restart, while the Codex summary model is read fresh for every summary run.
+
+## Uninstall boundary
+
+The menu bar opens a separately signed native uninstaller instead of deleting its own runtime inline. The uninstaller can therefore stop all three LaunchAgents before moving the running menu app, Python environment, whisper.cpp checkout, and models to a timestamped Trash folder. A second mode also moves the configured data and config roots; the first preserves them for reinstall.
+
+New data roots contain a `.familyrecorder-data` ownership marker. The helper rejects `/`, the user home directory, Trash, and the LaunchAgents directory as removal targets. For an older or custom unmarked data root, it moves only known FamilyRecorder-owned children and leaves unrelated files in place. Removal is recoverable until the user empties Trash. Shared ChatGPT/Codex authentication and Homebrew packages are explicitly outside the uninstall boundary.
 
 ## Explicit non-goals
 

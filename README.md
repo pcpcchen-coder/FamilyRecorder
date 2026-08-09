@@ -38,6 +38,7 @@ XVF3800 / XMOS UAC2
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；摘要會按原始片段時間建立事件時間軸，過長逐字稿則分段整理後再保留時間、去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
+- 內建原生一鍵解除安裝：可只移除程式與模型並保留家庭資料，或把程式、模型、錄音、逐字稿、資料庫、人聲樣本與設定完整移到垃圾桶。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
@@ -62,6 +63,8 @@ XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 
 3. 若尚未安裝 Codex，按「安裝官方 Codex CLI」；再按「登入 ChatGPT」，瀏覽器會開啟官方登入頁。
 4. 按「安裝 FamilyRecorder」。安裝器會從 DMG 內的 wheel 安裝本程式、以 Metal 編譯 whisper.cpp、下載選定模型，並建立 listener／summary／選單列工作。
 5. 接上 XVF3800，依 macOS 提示允許麥克風權限。
+
+同一個 DMG 也附有「解除安裝 FamilyRecorder.app」。平常可直接從選單列波形圖示選「解除安裝 FamilyRecorder…」；若選單列無法啟動，重新掛載 DMG 後打開解除安裝器即可，不需要使用終端機。
 
 安裝器不會要求 OpenAI API key，也不會讀取 Codex 登入檔或 token；它只執行官方 `codex login`／`codex login status`。若一般瀏覽器返回流程受網路環境影響，可按「改用裝置碼登入」。登入也可稍後完成；這時錄音與本機轉錄仍會安裝，但每日摘要排程要在登入後重跑一次安裝器才會啟用。
 
@@ -91,7 +94,7 @@ cd FamilyRecorder
 ./scripts/install_menubar.sh
 ```
 
-它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app`，安裝到 runtime，並建立登入後自動啟動的 `com.familyrecorder.menubar` LaunchAgent；不需要另外安裝 GUI framework。
+它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的 `com.familyrecorder.menubar` LaunchAgent；不需要另外安裝 GUI framework。
 
 `whisper.cpp` 官方將 Apple Silicon／Metal 列為一級支援，且 `whisper-cli` 使用 16-bit WAV；參考其[官方 README](https://github.com/ggml-org/whisper.cpp)。
 
@@ -280,6 +283,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。
 - 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
+- 使用「解除安裝 FamilyRecorder…」打開獨立解除安裝器；主選單被關閉後清理仍會繼續。
 
 暫停狀態存在 `data_dir/control.json`，不是只存在 UI 記憶體；因此選單列程式重啟不會意外恢復錄音，定時暫停到期則由 listener 自動恢復。選「結束選單列程式」只會關閉圖示，不會停止 listener；重新登入或重跑安裝腳本即可再次顯示。
 
@@ -292,11 +296,35 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
   download-whisper-model --model small-q5_1
 ```
 
-停止並移除三個 LaunchAgent（不刪逐字稿、SQLite、WAV、config 或 runtime）：
+## 一鍵解除安裝
+
+建議使用圖形介面：
+
+1. 點選單列波形圖示 →「解除安裝 FamilyRecorder…」。
+2. 選擇「只移除程式，保留家庭資料與設定」或「完整移除，包括所有模型、錄音與紀錄」。
+3. 確認畫面列出的程式／模型、家庭資料與設定容量，再按解除安裝。
+4. 所有選定內容會先移到同一個垃圾桶子資料夾；確認不需復原後再清空垃圾桶。
+
+「只移除程式」會停止並移除三個 LaunchAgent，移走 Python runtime、選單列 App、解除安裝器、whisper.cpp 與所有本機 Whisper 模型，但保留 `data_dir` 和 `config.yaml`，方便日後重新安裝。「完整移除」還會一併移走：
+
+- 原始 WAV、逐字稿、每日摘要與 SQLite。
+- 人聲特徵、擺位測試、暫停狀態與 logs。
+- FamilyRecorder 設定及其安裝備份。
+- 選單列 App 的 FamilyRecorder 麥克風權限紀錄。
+
+兩種模式都不會登出或移除 ChatGPT／Codex，不會刪除 Homebrew、Python、Git、CMake、PortAudio 等可能由其他程式共用的工具，也不會刪除 GitHub repo、本機原始碼 checkout 或另外下載的 DMG。
+
+資料目錄會建立 `.familyrecorder-data` 所有權標記，讓解除安裝器確認它是 FamilyRecorder 專用資料夾。為相容沒有標記的舊版或自訂共用路徑，完整移除時只會搬走已知的 FamilyRecorder 子目錄與資料庫，不會把整個 Documents 或其他共用資料夾移走。
+
+若圖形介面無法使用，可從原始碼 checkout 執行同一套安全解除安裝流程：
 
 ```bash
-./scripts/uninstall_launchd.sh
+./scripts/uninstall_family_recorder.sh inspect
+./scripts/uninstall_family_recorder.sh uninstall keep-data  # 保留家庭資料與設定
+./scripts/uninstall_family_recorder.sh uninstall all        # 完整移除
 ```
+
+舊的 `./scripts/uninstall_launchd.sh` 只適合暫時停止並移除三個 LaunchAgent，不會刪除其他內容。
 
 listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重試；重新插入後會再次自動選擇裝置。
 
@@ -358,6 +386,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 ```text
 ~/xvf3800-listener-data/
+├── .familyrecorder-data                   # 安全解除安裝用的專用目錄標記
 ├── audio/YYYY-MM-DD/HHMMSS_microseconds.wav
 ├── transcripts/YYYY-MM-DD.md
 ├── summaries/YYYY-MM-DD.md
@@ -421,7 +450,9 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 13. 設定三位測試成員並完成樣本後，選單顯示 3/3；逐字稿出現「可能：某人」或保守的「可能多人／不確定」，SQLite 三個 speaker 欄位同步。
 14. 刪除其中一位樣本後，對應 `speaker-*.json` 消失，其他成員不受影響。
 15. 摘要的「事件時間軸」、重要消息、決策與待辦均保留 `約 HH:MM`／時間區間；無法對應者標示「時間不明」。
-16. `ruff check .`、`ruff format --check .`、`pytest`、Swift typecheck、plist／shell 語法與套件建置全數通過。
+16. 在隔離暫存 HOME 驗證解除安裝兩種模式：保留模式不碰逐字稿與設定；完整模式移除全部 FamilyRecorder 內容；無標記的共用資料夾保留無關檔案。
+17. DMG 同時包含安裝器與解除安裝器，兩者簽章、版本與內含腳本均通過驗證。
+18. `ruff check .`、`ruff format --check .`、`pytest`、Swift typecheck、plist／shell 語法與套件建置全數通過。
 
 ## 常見問題
 
@@ -444,3 +475,5 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 **摘要沒有事件時間**：確認已升級到 0.6.0 以上，再對同一天重新執行 `summary --date YYYY-MM-DD`。舊摘要檔不會自行重寫；新版在每次單段、分段與最終整併請求都會附加時間輸出規則，現有自訂 prompt 不需手動修改。
 
 **選單列沒有圖示**：重跑 `./scripts/install_menubar.sh`，再檢查 `launchctl print "gui/$UID/com.familyrecorder.menubar"` 與 `menubar.error.log`。選單的「結束」是刻意正常退出，LaunchAgent 不會立即重開；重跑安裝腳本即可。
+
+**解除安裝器顯示沒有找到安裝內容**：確認是以安裝 FamilyRecorder 的同一個 macOS 使用者登入。若只剩舊資料、選單列已損壞，可從最新版 DMG 直接打開「解除安裝 FamilyRecorder.app」。

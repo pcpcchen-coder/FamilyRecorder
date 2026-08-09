@@ -57,6 +57,8 @@ class Storage:
     def __init__(self, config: StorageConfig) -> None:
         self.config = config
         self.root = config.data_dir
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / ".familyrecorder-data").touch(mode=0o600, exist_ok=True)
         self.audio_dir = self.root / "audio"
         self.transcript_dir = self.root / "transcripts"
         self.summary_dir = self.root / "summaries"

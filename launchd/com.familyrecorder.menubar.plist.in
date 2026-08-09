@@ -11,6 +11,8 @@
     <string>__PROGRAM__</string>
     <string>--config</string>
     <string>__CONFIG__</string>
+    <string>--uninstaller</string>
+    <string>__UNINSTALLER__</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

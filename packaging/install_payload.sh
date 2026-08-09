@@ -101,7 +101,13 @@ login_codex_with_device_code() {
 
 validate_payload() {
   [[ -x "$PAYLOAD_ROOT/scripts/install_mac.sh" ]] || fail "DMG 安裝資源不完整。"
+  [[ -x "$PAYLOAD_ROOT/scripts/uninstall_family_recorder.sh" ]] || \
+    fail "DMG 缺少解除安裝程式。"
   [[ -f "$PAYLOAD_ROOT/config.example.yaml" ]] || fail "DMG 缺少設定範例。"
+  [[ -f "$PAYLOAD_ROOT/packaging/FamilyRecorderUninstaller.swift" ]] || \
+    fail "DMG 缺少原生解除安裝介面。"
+  [[ -f "$PAYLOAD_ROOT/packaging/UninstallerInfo.plist" ]] || \
+    fail "DMG 缺少解除安裝器資訊。"
   compgen -G "$PAYLOAD_ROOT/wheel/family_recorder-*.whl" >/dev/null || \
     fail "DMG 缺少 FamilyRecorder wheel。"
 }

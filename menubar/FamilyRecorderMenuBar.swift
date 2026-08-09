@@ -86,6 +86,7 @@ struct RecorderStatus: Decodable {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let programPath: String
     private let configPath: String
+    private let uninstallerPath: String
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private var currentStatus: RecorderStatus?
@@ -99,9 +100,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
 
-    init(programPath: String, configPath: String) {
+    init(programPath: String, configPath: String, uninstallerPath: String) {
         self.programPath = programPath
         self.configPath = configPath
+        self.uninstallerPath = uninstallerPath
         super.init()
     }
 
@@ -260,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(item("重新讀取", action: #selector(refreshFromMenu)))
+        menu.addItem(item("解除安裝 FamilyRecorder…", action: #selector(openUninstaller)))
         menu.addItem(item("結束選單列程式", action: #selector(quitMenuBar)))
     }
 
@@ -428,6 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("檢查系統狀態…", action: #selector(runDoctor)))
         menu.addItem(item("重新讀取狀態", action: #selector(refreshFromMenu)))
         menu.addItem(.separator())
+        menu.addItem(item("解除安裝 FamilyRecorder…", action: #selector(openUninstaller)))
         menu.addItem(item("結束選單列程式", action: #selector(quitMenuBar)))
     }
 
@@ -876,6 +880,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.runModal()
     }
 
+    @objc private func openUninstaller() {
+        guard FileManager.default.fileExists(atPath: uninstallerPath) else {
+            showAlert(
+                title: "找不到解除安裝器",
+                message: "請使用最新版 FamilyRecorder DMG 重新安裝，或從 DMG 打開「解除安裝 FamilyRecorder」。"
+            )
+            return
+        }
+        let opened = NSWorkspace.shared.open(URL(fileURLWithPath: uninstallerPath))
+        if !opened {
+            showAlert(title: "無法打開解除安裝器", message: "請稍後再試，或重新啟動選單列程式。")
+        }
+    }
+
     @objc private func quitMenuBar() {
         NSApp.terminate(nil)
     }
@@ -889,14 +907,21 @@ func argumentValue(_ name: String) -> String? {
 }
 
 guard let programPath = argumentValue("--program"),
-      let configPath = argumentValue("--config") else {
+      let configPath = argumentValue("--config"),
+      let uninstallerPath = argumentValue("--uninstaller") else {
     FileHandle.standardError.write(
-        Data("Usage: FamilyRecorderMenuBar --program PATH --config PATH\n".utf8)
+        Data(
+            "Usage: FamilyRecorderMenuBar --program PATH --config PATH --uninstaller PATH\n".utf8
+        )
     )
     exit(2)
 }
 
 let application = NSApplication.shared
-let delegate = AppDelegate(programPath: programPath, configPath: configPath)
+let delegate = AppDelegate(
+    programPath: programPath,
+    configPath: configPath,
+    uninstallerPath: uninstallerPath
+)
 application.delegate = delegate
 application.run()
