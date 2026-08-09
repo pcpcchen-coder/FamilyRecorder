@@ -1,0 +1,60 @@
+# FamilyRecorder configuration for an XVF3800 USB Audio Class device.
+audio:
+  # Matching is case-insensitive. FamilyRecorder also scores "XVF3800", "XMOS",
+  # "USB" and "array" when this exact substring is unavailable.
+  device_name_contains: "XVF3800"
+  device_id: null
+  allow_default_input: false
+  sample_rate: 16000
+  channels: 1
+  chunk_seconds: 30
+  retry_seconds: 10
+
+vad:
+  enabled: true
+  aggressiveness: 2
+  frame_ms: 30
+  min_speech_ratio: 0.08
+  min_rms_dbfs: -48.0
+
+whisper:
+  binary_path: "~/Library/Application Support/FamilyRecorder/whisper.cpp/build/bin/whisper-cli"
+  model_path: "~/Library/Application Support/FamilyRecorder/whisper.cpp/models/ggml-large-v3-turbo.bin"
+  language: "zh"
+  threads: 8
+  initial_prompt: "以下是繁體中文家庭對話，可能包含英文技術名詞與人名。"
+  extra_args: []
+
+storage:
+  data_dir: "~/xvf3800-listener-data"
+  keep_audio_days: 7
+  delete_audio_after_transcription: false
+
+summary:
+  enabled: true
+  provider: "openai"
+  model: "gpt-5.6-luna"
+  hour: 0
+  minute: 10
+  max_input_chars: 300000
+  keychain_service: "familyrecorder-openai"
+  # null means the current macOS login account.
+  keychain_account: null
+  prompt: |
+    你是家庭聲音日誌整理助手。輸入是本地端語音辨識產生的逐段文字，
+    可能有錯字、重複、背景音或無意義片段。只根據逐字稿內容整理，
+    不得補造人物、事件、關係或結論。請輸出繁體中文 Markdown，包含：
+
+    1. 今日重要消息
+    2. 決策與承諾
+    3. 待辦事項（如可辨識，標示負責人與時間）
+    4. 值得追蹤的想法或靈感
+    5. 人名、專案名、產品名等關鍵實體
+    6. 可能辨識錯誤或需要人工確認的片段
+    7. 100 字內今日摘要
+
+    不要輸出無關的閒聊流水帳，也不要推測說話者身分。
+
+placement_test:
+  recording_seconds_per_sentence: 8
+  sentences_file: ""

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.familyrecorder.summary</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROGRAM__</string>
+    <string>--config</string>
+    <string>__CONFIG__</string>
+    <string>summary</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>__HOUR__</integer>
+    <key>Minute</key>
+    <integer>__MINUTE__</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/summary.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/summary.error.log</string>
+</dict>
+</plist>

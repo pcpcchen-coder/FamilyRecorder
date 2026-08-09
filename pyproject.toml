@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "family-recorder"
+version = "0.1.0"
+description = "Privacy-first XVF3800 listener with local whisper.cpp transcription"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "openai>=1.66,<3",
+  "PyYAML>=6.0,<7",
+  "sounddevice>=0.5,<1",
+  "webrtcvad-wheels>=2.0.14,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2,<2",
+  "pytest>=8.0,<9",
+  "pytest-cov>=5.0,<7",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+family-recorder = "family_recorder.cli:main"
+xvf-listener = "family_recorder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
