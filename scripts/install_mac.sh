@@ -18,8 +18,17 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
+PACKAGE_SOURCE="${FAMILYRECORDER_PACKAGE:-$REPO_ROOT}"
 WHISPER_VERSION="${WHISPER_CPP_VERSION:-v1.8.1}"
 WHISPER_MODEL="${WHISPER_MODEL:-large-v3-turbo}"
+
+case "$WHISPER_MODEL" in
+  small|medium|large-v3-turbo) ;;
+  *)
+    echo "Unsupported installer model: $WHISPER_MODEL" >&2
+    exit 1
+    ;;
+esac
 
 brew install python@3.12 portaudio cmake git
 
@@ -27,7 +36,7 @@ PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
 mkdir -p "$RUNTIME_ROOT" "$(dirname "$CONFIG_PATH")"
 "$PYTHON" -m venv "$RUNTIME_ROOT/venv"
 "$RUNTIME_ROOT/venv/bin/python" -m pip install --upgrade pip
-"$RUNTIME_ROOT/venv/bin/pip" install "$REPO_ROOT"
+"$RUNTIME_ROOT/venv/bin/pip" install --upgrade "$PACKAGE_SOURCE"
 
 WHISPER_ROOT="$RUNTIME_ROOT/whisper.cpp"
 if [[ ! -d "$WHISPER_ROOT/.git" ]]; then
@@ -54,9 +63,18 @@ else
   echo "Preserving existing configuration: $CONFIG_PATH"
 fi
 
+"$RUNTIME_ROOT/venv/bin/family-recorder" --config "$CONFIG_PATH" \
+  set-whisper-model --path "$MODEL_PATH"
+
 CODEX_BIN="$(command -v codex || true)"
 if [[ -z "$CODEX_BIN" && -x "/Applications/ChatGPT.app/Contents/Resources/codex" ]]; then
   CODEX_BIN="/Applications/ChatGPT.app/Contents/Resources/codex"
+fi
+if [[ -z "$CODEX_BIN" && -x "$HOME/.local/bin/codex" ]]; then
+  CODEX_BIN="$HOME/.local/bin/codex"
+fi
+if [[ -z "$CODEX_BIN" && -x "$HOME/.codex/bin/codex" ]]; then
+  CODEX_BIN="$HOME/.codex/bin/codex"
 fi
 if [[ -n "$CODEX_BIN" ]]; then
   echo "Found official Codex CLI: $CODEX_BIN"

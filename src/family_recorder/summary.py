@@ -21,6 +21,8 @@ BinaryResolver = Callable[[str], Path]
 
 CODEX_CANDIDATES = (
     Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+    Path("~/.local/bin/codex").expanduser(),
+    Path("~/.codex/bin/codex").expanduser(),
     Path("/opt/homebrew/bin/codex"),
     Path("/usr/local/bin/codex"),
 )

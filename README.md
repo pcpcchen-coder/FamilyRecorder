@@ -34,7 +34,7 @@ XVF3800 / XMOS UAC2
 - 每日 Markdown 逐字稿，以及含時間、音量、SNR、speech ratio、WAV 路徑與狀態的 SQLite 索引。
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；過長逐字稿會分段整理後再去重整併。
-- 兩個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行。
+- 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、切換 Whisper／摘要模型、立即摘要、重啟與系統檢查。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
@@ -49,6 +49,22 @@ XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 
 - 雲端摘要才需要網路、官方 Codex CLI，以及可使用 Codex 的 ChatGPT 帳號；不需要 API key。監聽、VAD、轉錄不需要網路
 
 ## 安裝
+
+### DMG 圖形安裝（建議）
+
+從 [GitHub Releases](https://github.com/pcpcchen-coder/FamilyRecorder/releases) 下載最新的 `FamilyRecorder-*-arm64.dmg` 與 `.sha256`，先核對 SHA-256，再開啟 DMG：
+
+1. 執行「安裝 FamilyRecorder.app」。
+2. 在視窗中選擇 `small`、`medium` 或建議的 `large-v3-turbo` 本機 Whisper 模型。
+3. 若尚未安裝 Codex，按「安裝官方 Codex CLI」；再按「登入 ChatGPT」，瀏覽器會開啟官方登入頁。
+4. 按「安裝 FamilyRecorder」。安裝器會從 DMG 內的 wheel 安裝本程式、以 Metal 編譯 whisper.cpp、下載選定模型，並建立 listener／summary／選單列工作。
+5. 接上 XVF3800，依 macOS 提示允許麥克風權限。
+
+安裝器不會要求 OpenAI API key，也不會讀取 Codex 登入檔或 token；它只執行官方 `codex login`／`codex login status`。若一般瀏覽器返回流程受網路環境影響，可按「改用裝置碼登入」。登入也可稍後完成；這時錄音與本機轉錄仍會安裝，但每日摘要排程要在登入後重跑一次安裝器才會啟用。
+
+目前公開 DMG 為 Apple Silicon、macOS 13+，並使用 ad-hoc 簽署，尚未經 Apple Developer ID 公證。第一次開啟若被 Gatekeeper 阻擋，請在 Finder 對安裝 app 按右鍵 →「打開」，並確認下載來源與 SHA-256。Homebrew 套件、whisper.cpp 原始碼／模型與 Codex CLI 仍需連線至其官方來源下載；FamilyRecorder wheel 與安裝介面本身包含在 DMG 內。
+
+### 從原始碼安裝
 
 ```bash
 git clone https://github.com/pcpcchen-coder/FamilyRecorder.git
@@ -82,7 +98,7 @@ cd FamilyRecorder
 WHISPER_MODEL=medium ./scripts/install_mac.sh
 ```
 
-接著把 YAML 的 `whisper.model_path` 改成 `ggml-medium.bin`。
+安裝腳本會下載並自動把 YAML 的 `whisper.model_path` 切到 `ggml-medium.bin`；原有 config 其餘設定會保留。
 
 ## 第一次硬體 bring-up
 
@@ -282,6 +298,14 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 .venv/bin/ruff format --check .
 .venv/bin/pytest --cov=family_recorder
 ```
+
+在 Apple Silicon Mac 建置可攜 DMG：
+
+```bash
+./scripts/build_dmg.sh
+```
+
+產物為 `dist/FamilyRecorder-<版本>-arm64.dmg` 與對應的 `.sha256`。若要公開散布且不顯示 Gatekeeper 未公證警告，發行者還需使用 Developer ID Application 憑證簽署並送 Apple notarization；一般 Apple Development 憑證不等同公開發行公證。
 
 硬體不在 CI 測試範圍；裝置選擇、雙聲道 downmix／取樣率轉換、VAD 指標、Whisper CLI 介面、SQLite／Markdown、retention、純文字摘要與 CER 報告都有隔離測試。
 

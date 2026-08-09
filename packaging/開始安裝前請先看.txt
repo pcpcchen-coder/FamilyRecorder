@@ -1,0 +1,30 @@
+FamilyRecorder 0.4.0 — Apple Silicon 安裝說明
+================================================
+
+1. 雙擊「安裝 FamilyRecorder.app」。
+2. 選擇本機 Whisper 模型：
+   - small：約 466 MB，速度快、資源用量低。
+   - medium：約 1.5 GB，速度與辨識品質較平衡。
+   - large-v3-turbo：約 1.6 GB，建議選項，中文品質較佳。
+3. 按「登入 ChatGPT」完成官方 Codex 網頁登入。FamilyRecorder 不會讀取或保存 token。
+4. 按「安裝 FamilyRecorder」；安裝器會下載模型、以 Metal 編譯 whisper.cpp，並啟用錄音、選單列與每日摘要。
+5. 接上 XVF3800，依 macOS 提示允許麥克風權限。
+
+系統需求
+--------
+- Apple Silicon Mac、macOS 13 或更新版本。
+- Homebrew（若未安裝，安裝器可開啟 https://brew.sh）。
+- 網路：安裝 Homebrew 套件、Whisper 模型、Codex CLI，以及每日摘要時需要。
+- 約 2–4 GB 可用空間，另加錄音資料空間。
+
+第一次開啟若被 macOS 阻擋
+--------------------------
+此版本尚未經 Apple Developer ID 公證。請在 Finder 對「安裝 FamilyRecorder.app」按右鍵，選「打開」，再確認一次。不要使用來源不明或校驗碼不符的 DMG。
+
+隱私提醒
+--------
+錄音前必須取得所有可能被錄音者的明確同意。Whisper 轉錄在本機執行；每日摘要只傳送文字逐字稿，不傳原始 WAV。
+
+支援與原始碼
+------------
+https://github.com/pcpcchen-coder/FamilyRecorder

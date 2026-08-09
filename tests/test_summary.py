@@ -3,7 +3,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from family_recorder.config import AppConfig, StorageConfig, SummaryConfig
-from family_recorder.summary import DailySummaryRunner, check_codex_login, split_text
+from family_recorder.summary import (
+    DailySummaryRunner,
+    check_codex_login,
+    resolve_codex_binary,
+    split_text,
+)
 
 
 class FakeCommandRunner:
@@ -92,3 +97,20 @@ def test_split_text_respects_limit() -> None:
     chunks = split_text("line one\nline two\nline three\n", 12)
     assert "".join(chunks) == "line one\nline two\nline three\n"
     assert all(len(chunk) <= 12 for chunk in chunks)
+
+
+def test_resolve_codex_binary_supports_official_standalone_location(
+    tmp_path: Path, monkeypatch
+) -> None:
+    binary = tmp_path / ".local" / "bin" / "codex"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(
+        "family_recorder.summary.CODEX_CANDIDATES",
+        (Path("~/.local/bin/codex").expanduser(),),
+    )
+
+    assert resolve_codex_binary("codex") == binary.resolve()
