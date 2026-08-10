@@ -68,6 +68,11 @@ def _parser() -> argparse.ArgumentParser:
     summary_model.add_argument("--model", required=True)
     commands.add_parser("menu-status", help=argparse.SUPPRESS)
 
+    common_terms = commands.add_parser(
+        "set-common-terms", help="Set words and names used to improve local transcription"
+    )
+    common_terms.add_argument("--term", action="append", default=[])
+
     speakers = commands.add_parser(
         "set-speakers", help="Set the known household members for approximate local labeling"
     )
@@ -196,6 +201,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         ],
         "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
+        "common_terms": list(config.whisper.common_terms),
         "speaker_enabled": config.speakers.enabled,
         "speaker_members": profile_store.statuses(config.speakers.members),
         "speaker_profiles_dir": str(profile_store.directory),
@@ -253,6 +259,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "summary", "model", args.model.strip()
             )
             print(f"Summary model: {args.model.strip() or 'ChatGPT account default'}")
+            return 0
+        if args.command == "set-common-terms":
+            terms = tuple(term.strip() for term in args.term if term.strip())
+            if len(terms) > 100:
+                raise ValueError("常用字詞最多可設定 100 個")
+            if any(len(term) > 40 or "\n" in term or "\r" in term for term in terms):
+                raise ValueError("每個常用字詞必須是 1 到 40 個字元")
+            if len({term.casefold() for term in terms}) != len(terms):
+                raise ValueError("常用字詞不可重複")
+            update_yaml_value(
+                args.config.expanduser().resolve(), "whisper", "common_terms", list(terms)
+            )
+            print(f"常用字詞已設定為 {len(terms)} 個")
             return 0
         if args.command == "set-speakers":
             members = tuple(name.strip() for name in args.name if name.strip())

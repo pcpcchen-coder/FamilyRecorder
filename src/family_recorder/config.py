@@ -38,6 +38,7 @@ class WhisperConfig:
     language: str = "zh"
     threads: int = 8
     initial_prompt: str = ""
+    common_terms: tuple[str, ...] = ()
     extra_args: tuple[str, ...] = ()
 
 
@@ -147,6 +148,11 @@ def load_config(path: str | Path) -> AppConfig:
     whisper_values["model_path"] = _path(
         whisper_values.get("model_path", whisper_defaults.model_path)
     )
+    if "common_terms" in whisper_values:
+        common_terms = whisper_values["common_terms"]
+        if not isinstance(common_terms, list):
+            raise ValueError("whisper.common_terms must be a YAML list")
+        whisper_values["common_terms"] = tuple(str(v).strip() for v in common_terms)
     if "extra_args" in whisper_values:
         whisper_values["extra_args"] = tuple(str(v) for v in whisper_values["extra_args"])
     whisper = WhisperConfig(**whisper_values)
@@ -204,6 +210,13 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("vad.min_speech_ratio must be between 0 and 1")
     if config.storage.keep_audio_days < 0:
         raise ValueError("storage.keep_audio_days cannot be negative")
+    if len(config.whisper.common_terms) > 100:
+        raise ValueError("whisper.common_terms supports at most 100 terms")
+    if any(not term or len(term) > 40 for term in config.whisper.common_terms):
+        raise ValueError("common terms must contain 1 to 40 characters")
+    normalized_terms = [term.casefold() for term in config.whisper.common_terms]
+    if len(normalized_terms) != len(set(normalized_terms)):
+        raise ValueError("whisper.common_terms cannot contain duplicate terms")
     if len(config.speakers.members) > 8:
         raise ValueError("speakers.members supports at most 8 household members")
     if any(not name or len(name) > 80 for name in config.speakers.members):

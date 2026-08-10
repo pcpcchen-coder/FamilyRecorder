@@ -23,6 +23,9 @@ whisper:
   language: "zh"
   threads: 8
   initial_prompt: "以下是繁體中文家庭對話，可能包含英文技術名詞與人名。"
+  # Names and terms are added to the Whisper prompt. Unambiguous one-character
+  # near misses of terms with 3+ characters are also corrected locally.
+  common_terms: []
   extra_args: []
 
 storage:

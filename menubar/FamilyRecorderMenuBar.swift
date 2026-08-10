@@ -57,6 +57,7 @@ struct RecorderStatus: Decodable {
     let whisperModels: [WhisperModel]
     let downloadableWhisperModels: [DownloadableWhisperModel]
     let summaryModel: String
+    let commonTerms: [String]
     let speakerEnabled: Bool
     let speakerMembers: [SpeakerMember]
     let speakerProfilesDir: String
@@ -80,6 +81,7 @@ struct RecorderStatus: Decodable {
         case whisperModels = "whisper_models"
         case downloadableWhisperModels = "downloadable_whisper_models"
         case summaryModel = "summary_model"
+        case commonTerms = "common_terms"
         case speakerEnabled = "speaker_enabled"
         case speakerMembers = "speaker_members"
         case speakerProfilesDir = "speaker_profiles_dir"
@@ -353,6 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 enabled: false
             )
         )
+        menu.addItem(item("常用字詞：\(status.commonTerms.count) 個", enabled: false))
         menu.addItem(.separator())
 
         if status.paused {
@@ -448,6 +451,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelMenu.addItem(summaryItem)
         modelItem.submenu = modelMenu
         menu.addItem(modelItem)
+
+        let termsItem = item("常用字詞校正")
+        let termsMenu = NSMenu()
+        if status.commonTerms.isEmpty {
+            termsMenu.addItem(item("尚未設定", enabled: false))
+        } else {
+            for term in status.commonTerms {
+                termsMenu.addItem(item("✓ \(term)", enabled: false))
+            }
+        }
+        termsMenu.addItem(.separator())
+        termsMenu.addItem(item("新增／移除常用字詞…", action: #selector(editCommonTerms)))
+        termsMenu.addItem(
+            item("辨識前提示，並保守校正單一字差", enabled: false)
+        )
+        termsItem.submenu = termsMenu
+        menu.addItem(termsItem)
 
         let familyItem = item("家庭成員與人聲")
         let familyMenu = NSMenu()
@@ -660,6 +680,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runRecorderAsync(arguments) { [weak self] status, output in
             guard status == 0 else {
                 self?.showAlert(title: "家庭成員設定失敗", message: output)
+                return
+            }
+            let restart = self?.restartListener() ?? (1, "無法重新啟動錄音服務")
+            self?.refreshStatus(rebuildMenu: true)
+            if restart.0 != 0 {
+                self?.showAlert(title: "設定已儲存，但錄音服務重啟失敗", message: restart.1)
+            }
+        }
+    }
+
+    @objc private func editCommonTerms() {
+        let alert = NSAlert()
+        alert.messageText = "設定常用字詞"
+        alert.informativeText =
+            "每行一個姓名或專有名詞，最多 100 個。這些字詞只在本機提供給 Whisper，並保守校正只有一個字不同且沒有歧義的結果。"
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 180))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.bounds)
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.font = NSFont.systemFont(ofSize: 14)
+        textView.string = currentStatus?.commonTerms.joined(separator: "\n") ?? ""
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let terms = textView.string
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var arguments = ["set-common-terms"]
+        for term in terms {
+            arguments.append(contentsOf: ["--term", term])
+        }
+        runRecorderAsync(arguments) { [weak self] status, output in
+            guard status == 0 else {
+                self?.showAlert(title: "常用字詞設定失敗", message: output)
                 return
             }
             let restart = self?.restartListener() ?? (1, "無法重新啟動錄音服務")

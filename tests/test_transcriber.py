@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from family_recorder.config import WhisperConfig
-from family_recorder.transcriber import TranscriptionError, WhisperCppTranscriber
+from family_recorder.transcriber import (
+    TranscriptionError,
+    WhisperCppTranscriber,
+    correct_common_terms,
+)
 
 
 def _fake_whisper(tmp_path: Path, exit_code: int = 0) -> Path:
@@ -55,3 +59,10 @@ def test_whisper_cli_error_is_actionable(tmp_path: Path) -> None:
     )
     with pytest.raises(TranscriptionError, match="fake whisper failure"):
         transcriber.transcribe(audio)
+
+
+def test_common_term_correction_is_conservative() -> None:
+    assert correct_common_terms("今天陳樂榮回家了", ("陳樂融",)) == "今天陳樂融回家了"
+    assert correct_common_terms("今天陳月容回家了", ("陳樂融",)) == "今天陳月容回家了"
+    assert correct_common_terms("陳樂容", ("陳樂融", "陳樂榮")) == "陳樂容"
+    assert correct_common_terms("小陳來了", ("小王",)) == "小陳來了"

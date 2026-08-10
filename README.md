@@ -36,6 +36,7 @@ XVF3800 / XMOS
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；摘要會按原始片段時間與本機近似人別建立事件時間軸及家庭成員重點，過長逐字稿則依完整段落切分後再保留時間、人別並去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
+- 可從選單維護姓名與專有名詞清單；字詞會加入本機 Whisper 提示，並在辨識後保守校正無歧義的單一字差近似結果。
 - 內建原生一鍵解除安裝：可只移除程式與模型並保留家庭資料，或把程式、模型、錄音、逐字稿、資料庫、人聲樣本與設定完整移到垃圾桶。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - 透過 XVF3800 獨立 USB 控制介面同步讀取 DoA（Direction of Arrival）；將 Whisper 的數秒級時間片段分別配對音色人別與方向，逐字稿及每日摘要同時保留兩種線索。
@@ -182,6 +183,7 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `vad.min_speech_ratio` | `0.08` | 一個 chunk 至少多少比例判為語音 |
 | `vad.min_rms_dbfs` | `-48` | 音量 gate；越接近 0 越嚴格 |
 | `whisper.language` | `zh` | Whisper 語言 |
+| `whisper.common_terms` | `[]` | 常用姓名／術語；可由選單逐行新增或移除，僅在本機使用 |
 | `storage.keep_audio_days` | `7` | WAV 保留天數；0 代表只保留仍未超過當下 cutoff 的檔案 |
 | `storage.delete_audio_after_transcription` | `false` | 成功或空白轉錄後立即刪 WAV；失敗 WAV 仍保留 |
 | `speakers.enabled` | `false` | 有家庭成員時由選單自動開啟本機近似人別 |
@@ -319,6 +321,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 從實際已下載的 `ggml-*.bin` 清單切換本機 Whisper；切換後會重啟 listener。
 - 在「本機 Whisper → 下載其他模型…」依標準、量化省空間、舊版相容三組直接下載新的多語模型；會顯示預估容量，支援失敗後續傳，完成 GGML 格式驗證後才切換並重啟 listener，原有模型不會刪除。
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。
+- 在「常用字詞校正」逐行維護姓名與術語，例如 `陳樂融`；儲存後會重啟 listener 套用。
 - 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
 - 使用「解除安裝 FamilyRecorder…」打開獨立解除安裝器；主選單被關閉後清理仍會繼續。

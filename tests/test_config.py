@@ -31,6 +31,15 @@ whisper:
     assert config.whisper.binary_path == (tmp_path / "bin/whisper-cli").resolve()
 
 
+def test_load_config_accepts_common_terms(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        'whisper:\n  common_terms: ["陳樂融", "FamilyRecorder"]\n', encoding="utf-8"
+    )
+    config = load_config(config_file)
+    assert config.whisper.common_terms == ("陳樂融", "FamilyRecorder")
+
+
 def test_load_config_rejects_unknown_key(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     config_file.write_text("audio:\n  mystery: true\n", encoding="utf-8")
