@@ -4,12 +4,19 @@
 <dict>
   <key>Label</key>
   <string>com.familyrecorder.listener</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>com.familyrecorder.app</string>
+  </array>
   <key>ProgramArguments</key>
   <array>
+    <string>__APP_EXECUTABLE__</string>
+    <string>--service</string>
+    <string>listener</string>
+    <string>--program</string>
     <string>__PROGRAM__</string>
     <string>--config</string>
     <string>__CONFIG__</string>
-    <string>listen</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

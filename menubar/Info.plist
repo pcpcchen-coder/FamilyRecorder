@@ -7,9 +7,9 @@
   <key>CFBundleDisplayName</key>
   <string>FamilyRecorder</string>
   <key>CFBundleExecutable</key>
-  <string>FamilyRecorderMenuBar</string>
+  <string>FamilyRecorder</string>
   <key>CFBundleIdentifier</key>
-  <string>com.familyrecorder.menubar</string>
+  <string>com.familyrecorder.app</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -17,7 +17,7 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.8.0</string>
+  <string>0.9.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

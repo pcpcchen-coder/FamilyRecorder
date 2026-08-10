@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Darwin
 import Foundation
 
 struct WhisperModel: Decodable {
@@ -112,6 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         refreshStatus(rebuildMenu: true)
+        requestMicrophoneAccess { [weak self] granted in
+            if !granted {
+                self?.updateStatusIcon(
+                    symbol: "mic.slash.circle.fill",
+                    tooltip: "FamilyRecorder 需要麥克風權限"
+                )
+            }
+        }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.refreshStatus(rebuildMenu: false)
         }
@@ -906,12 +915,140 @@ func argumentValue(_ name: String) -> String? {
     return CommandLine.arguments[valueIndex]
 }
 
+func writeStandardError(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+}
+
+func authorizeMicrophoneForListener() -> Bool {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+        return true
+    case .notDetermined:
+        let semaphore = DispatchSemaphore(value: 0)
+        var granted = false
+        AVCaptureDevice.requestAccess(for: .audio) { result in
+            granted = result
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 120) == .success else {
+            writeStandardError("FamilyRecorder 等候麥克風授權逾時。")
+            return false
+        }
+        return granted
+    case .denied, .restricted:
+        return false
+    @unknown default:
+        return false
+    }
+}
+
+final class MicrophoneAuthorizationDelegate: NSObject, NSApplicationDelegate {
+    private(set) var granted = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // A regular, foreground first-run process lets macOS present the TCC
+        // dialog reliably even though the normal menu-bar process is hidden.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            granted = true
+            NSApp.terminate(nil)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] result in
+                DispatchQueue.main.async {
+                    self?.granted = result
+                    NSApp.terminate(nil)
+                }
+            }
+        case .denied, .restricted:
+            NSApp.terminate(nil)
+        @unknown default:
+            NSApp.terminate(nil)
+        }
+    }
+}
+
+func runRecorderService(
+    service: String,
+    programPath: String,
+    configPath: String
+) -> Never {
+    let recorderArguments: [String]
+    switch service {
+    case "listener", "listener-once":
+        guard authorizeMicrophoneForListener() else {
+            writeStandardError(
+                "FamilyRecorder 沒有麥克風權限。請到「系統設定 → 隱私權與安全性 → 麥克風」開啟 FamilyRecorder。"
+            )
+            exit(77)
+        }
+        recorderArguments = service == "listener-once" ? ["listen", "--once"] : ["listen"]
+    case "summary":
+        recorderArguments = ["summary"]
+    default:
+        writeStandardError("Unknown FamilyRecorder service: \(service)")
+        exit(64)
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: programPath)
+    process.arguments = ["--config", configPath] + recorderArguments
+    var signalSources: [DispatchSourceSignal] = []
+    for signalNumber in [SIGTERM, SIGINT] {
+        signal(signalNumber, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(
+            signal: signalNumber,
+            queue: DispatchQueue.global(qos: .utility)
+        )
+        source.setEventHandler {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        source.resume()
+        signalSources.append(source)
+    }
+    do {
+        try process.run()
+        process.waitUntilExit()
+        signalSources.forEach { $0.cancel() }
+        exit(process.terminationStatus)
+    } catch {
+        writeStandardError("Unable to launch FamilyRecorder \(service): \(error.localizedDescription)")
+        exit(70)
+    }
+}
+
+if CommandLine.arguments.contains("--authorize-microphone") {
+    let authorizationApplication = NSApplication.shared
+    let authorizationDelegate = MicrophoneAuthorizationDelegate()
+    authorizationApplication.delegate = authorizationDelegate
+    authorizationApplication.run()
+    exit(authorizationDelegate.granted ? 0 : 77)
+}
+
+if let service = argumentValue("--service") {
+    guard let serviceProgramPath = argumentValue("--program"),
+          let serviceConfigPath = argumentValue("--config") else {
+        writeStandardError(
+            "Usage: FamilyRecorder --service listener|listener-once|summary --program PATH --config PATH"
+        )
+        exit(64)
+    }
+    runRecorderService(
+        service: service,
+        programPath: serviceProgramPath,
+        configPath: serviceConfigPath
+    )
+}
+
 guard let programPath = argumentValue("--program"),
       let configPath = argumentValue("--config"),
       let uninstallerPath = argumentValue("--uninstaller") else {
     FileHandle.standardError.write(
         Data(
-            "Usage: FamilyRecorderMenuBar --program PATH --config PATH --uninstaller PATH\n".utf8
+            "Usage: FamilyRecorder --program PATH --config PATH --uninstaller PATH\n".utf8
         )
     )
     exit(2)

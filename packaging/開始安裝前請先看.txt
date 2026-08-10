@@ -1,4 +1,4 @@
-FamilyRecorder 0.8.0 — Apple Silicon 安裝說明
+FamilyRecorder 0.9.0 — Apple Silicon 安裝說明
 ================================================
 
 1. 雙擊「安裝 FamilyRecorder.app」。

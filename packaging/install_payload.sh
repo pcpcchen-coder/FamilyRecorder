@@ -138,15 +138,15 @@ install_family_recorder() {
   WHISPER_MODEL="$model" \
     "$PAYLOAD_ROOT/scripts/install_mac.sh"
 
-  log "正在啟用錄音常駐服務…"
-  FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
-  FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
-    "$PAYLOAD_ROOT/scripts/install_launchd.sh"
-
   log "正在安裝選單列控制程式…"
   FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
   FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
     "$PAYLOAD_ROOT/scripts/install_menubar.sh"
+
+  log "正在啟用錄音常駐服務…"
+  FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
+  FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
+    "$PAYLOAD_ROOT/scripts/install_launchd.sh"
 
   codex_bin="$(find_codex || true)"
   if [[ -n "$codex_bin" ]] && codex_is_logged_in; then

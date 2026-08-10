@@ -11,12 +11,13 @@ RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/F
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
 PROGRAM="$RUNTIME_ROOT/venv/bin/family-recorder"
 APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"
-APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/FamilyRecorderMenuBar"
+APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/FamilyRecorder"
 UNINSTALLER_ROOT="$RUNTIME_ROOT/解除安裝 FamilyRecorder.app"
 UNINSTALLER_EXECUTABLE="$UNINSTALLER_ROOT/Contents/MacOS/FamilyRecorderUninstaller"
 UNINSTALLER_RESOURCES="$UNINSTALLER_ROOT/Contents/Resources"
 PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.menubar.plist"
 TEMPLATE="$REPO_ROOT/launchd/com.familyrecorder.menubar.plist.in"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 if [[ ! -x "$PROGRAM" || ! -f "$CONFIG_PATH" ]]; then
   echo "Run scripts/install_mac.sh before installing the menu bar app." >&2
@@ -35,18 +36,30 @@ print(load_config(sys.argv[1]).storage.data_dir / "logs")
 PY
 )"
 
+launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
 mkdir -p \
   "$APP_ROOT/Contents/MacOS" \
   "$UNINSTALLER_ROOT/Contents/MacOS" \
   "$UNINSTALLER_RESOURCES" \
   "$HOME/Library/LaunchAgents" \
   "$LOG_DIR"
+if [[ -x "$LSREGISTER" && -d "$APP_ROOT" ]]; then
+  "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
+fi
+rm -f "$APP_ROOT/Contents/MacOS/FamilyRecorderMenuBar"
 xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation \
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
 codesign --force --deep --sign - "$APP_ROOT"
 plutil -lint "$APP_ROOT/Contents/Info.plist"
+
+# Register the bundle before loading the associated LaunchAgents so macOS can
+# attribute every background item and protected-resource request to the
+# user-facing FamilyRecorder app instead of its Python worker executable.
+if [[ -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -f "$APP_ROOT"
+fi
 
 xcrun swiftc -O -parse-as-library -swift-version 5 -framework AppKit \
   "$REPO_ROOT/packaging/FamilyRecorderUninstaller.swift" \
@@ -59,6 +72,12 @@ install -m 755 \
   "$UNINSTALLER_RESOURCES/uninstall_family_recorder.sh"
 codesign --force --deep --sign - "$UNINSTALLER_ROOT"
 plutil -lint "$UNINSTALLER_ROOT/Contents/Info.plist"
+
+# Launch once through Launch Services so TCC records the bundle identity and
+# presents "FamilyRecorder" in the microphone permission panel. The special
+# mode exits immediately after the existing decision is read or the user
+# answers the first-run prompt; launchd starts the normal menu app afterward.
+/usr/bin/open -n -W "$APP_ROOT" --args --authorize-microphone
 
 "$RUNTIME_ROOT/venv/bin/python" - \
   "$TEMPLATE" "$PLIST" "$APP_EXECUTABLE" "$PROGRAM" "$CONFIG_PATH" "$LOG_DIR" \
@@ -81,7 +100,6 @@ Path(target).write_text(text, encoding="utf-8")
 PY
 
 plutil -lint "$PLIST"
-launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$UID" "$PLIST"
 launchctl kickstart -k "gui/$UID/com.familyrecorder.menubar"
 echo "Installed and started the FamilyRecorder menu bar app"

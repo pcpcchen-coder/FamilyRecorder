@@ -62,7 +62,7 @@ XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 
 2. 在視窗中選擇 `small`、`medium` 或建議的 `large-v3-turbo` 本機 Whisper 模型。
 3. 若尚未安裝 Codex，按「安裝官方 Codex CLI」；再按「登入 ChatGPT」，瀏覽器會開啟官方登入頁。
 4. 按「安裝 FamilyRecorder」。安裝器會從 DMG 內的 wheel 安裝本程式、以 Metal 編譯 whisper.cpp、下載選定模型，並建立 listener／summary／選單列工作。
-5. 接上 XVF3800，依 macOS 提示允許麥克風權限。
+5. 接上 XVF3800，依 macOS 提示允許「FamilyRecorder」使用麥克風。
 
 同一個 DMG 也附有「解除安裝 FamilyRecorder.app」。平常可直接從選單列波形圖示選「解除安裝 FamilyRecorder…」；若選單列無法啟動，重新掛載 DMG 後打開解除安裝器即可，不需要使用終端機。
 
@@ -88,13 +88,25 @@ cd FamilyRecorder
 6. 僅在不存在時建立 `~/.config/familyrecorder/config.yaml`，不覆蓋舊設定。
 7. 偵測官方 Codex CLI／ChatGPT app，並顯示目前的 ChatGPT 登入狀態。
 
-第一次完成硬體驗收後，安裝選單列程式：
+先安裝選單列程式，再進行硬體驗收：
 
 ```bash
 ./scripts/install_menubar.sh
 ```
 
-它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的 `com.familyrecorder.menubar` LaunchAgent；不需要另外安裝 GUI framework。
+它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的內部工作；不需要另外安裝 GUI framework。安裝途中 macOS 會以 `FamilyRecorder` 名稱顯示一次麥克風授權提示，請按「允許」。listener、每日摘要與選單列雖然是三個內部工作，macOS 會把它們關聯到同一個 `FamilyRecorder.app`。
+
+### macOS 中看到的名稱
+
+從 0.9.0 起，正式安裝後的所有使用者可見名稱統一如下：
+
+| macOS 畫面 | 顯示名稱 |
+|---|---|
+| 系統設定 → 隱私權與安全性 → 麥克風 | `FamilyRecorder.app`（macOS 在此頁自動顯示 `.app` 副檔名） |
+| 系統設定 → 一般 → 登入項目與延伸功能 → App 背景活動 | `FamilyRecorder`（三個背景工作合併在同一 App 下） |
+| 選單列、通知與麥克風授權提示 | `FamilyRecorder` |
+
+`com.familyrecorder.listener`、`com.familyrecorder.summary`、`com.familyrecorder.menubar` 只是在 log 或診斷指令中使用的內部識別碼，不是 macOS 顯示給一般使用者的 App 名稱。麥克風頁和 Finder 一樣可能顯示 `FamilyRecorder.app`，其中 `.app` 是 macOS 顯示的應用程式副檔名，App 名稱仍是 `FamilyRecorder`。若是從 0.8.0 或更舊版本原地升級，舊的 `python3.12`／`family-recorder` 可能留在系統的歷史清單；可將它關閉，不需要刪除整個清單。新版錄音服務不再依賴該權限，而是由 `FamilyRecorder.app` 持有麥克風授權。
 
 `whisper.cpp` 官方將 Apple Silicon／Metal 列為一級支援，且 `whisper-cli` 使用 16-bit WAV；參考其[官方 README](https://github.com/ggml-org/whisper.cpp)。
 
@@ -138,10 +150,13 @@ audio:
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" doctor
 ```
 
-到「系統設定 → 隱私權與安全性 → 麥克風」允許你使用的 Terminal，再跑一個 30 秒 chunk。開始後持續說話，避免被 VAD 判成安靜：
+到「系統設定 → 隱私權與安全性 → 麥克風」允許 `FamilyRecorder`，再透過原生 App 身分跑一個 30 秒 chunk。開始後持續說話，避免被 VAD 判成安靜：
 
 ```bash
-"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" listen --once
+"$RUNTIME/FamilyRecorder.app/Contents/MacOS/FamilyRecorder" \
+  --service listener-once \
+  --program "$RUNTIME/venv/bin/family-recorder" \
+  --config "$CONFIG"
 ```
 
 檢查結果：
@@ -259,7 +274,7 @@ codex login status
 
 ## 安裝常駐工作
 
-務必先通過手動 `listen --once`，再安裝 listener：
+務必先通過上面的單次錄音驗收，且已執行 `install_menubar.sh`，再安裝 listener：
 
 ```bash
 ./scripts/install_launchd.sh
@@ -471,7 +486,9 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 **Invalid sample rate**：確認 YAML 目標為 16000。程式會在 16 kHz 開啟失敗時改用裝置宣告的 48 kHz，再於本機轉成 16 kHz；若裝置預設值不正確，先在「音訊 MIDI 設定」選 16 kHz 或 48 kHz。
 
-**LaunchAgent 沒收到聲音**：先確定同一支已安裝的 runtime binary 能手動 `listen --once`；檢查「系統設定 → 隱私權與安全性 → 麥克風」與 `listener.error.log`。macOS 麥克風權限是每台機器的互動授權，安裝腳本不能替你繞過。
+**LaunchAgent 沒收到聲音**：先使用「第一次硬體 bring-up」中的 `FamilyRecorder --service listener-once` 指令測試；檢查「系統設定 → 隱私權與安全性 → 麥克風」中 `FamilyRecorder.app` 已開啟，以及 `listener.error.log`。macOS 麥克風權限是每台機器的互動授權，安裝腳本不能替你繞過。
+
+**系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 
 **一直被 VAD 略過**：查看 log 的 RMS 與 speech ratio，先以 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。
 

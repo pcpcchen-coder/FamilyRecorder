@@ -4,6 +4,10 @@
 <dict>
   <key>Label</key>
   <string>com.familyrecorder.menubar</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>com.familyrecorder.app</string>
+  </array>
   <key>ProgramArguments</key>
   <array>
     <string>__APP_EXECUTABLE__</string>

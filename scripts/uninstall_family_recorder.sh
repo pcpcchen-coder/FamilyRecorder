@@ -195,6 +195,7 @@ uninstall() {
   fi
 
   if command -v tccutil >/dev/null 2>&1; then
+    tccutil reset Microphone com.familyrecorder.app >/dev/null 2>&1 || true
     tccutil reset Microphone com.familyrecorder.menubar >/dev/null 2>&1 || true
   fi
   move_into "$RUNTIME_ROOT" "$trash_session/程式與模型"
