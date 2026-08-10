@@ -48,7 +48,20 @@ def update_yaml_value(path: Path, section: str, key: str, value: object) -> None
         return
 
     newline = "\r\n" if lines[key_index].endswith("\r\n") else "\n"
-    lines[key_index] = f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
+    replacement = f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
+    block_scalar = re.match(
+        rf"^  {re.escape(key)}:\s*[|>][+-]?\s*(?:#.*)?(?:\r?\n)?$", lines[key_index]
+    )
+    if block_scalar:
+        block_end = key_index + 1
+        while block_end < len(lines):
+            candidate = lines[block_end]
+            if candidate.strip() and not candidate.startswith(("    ", "\t")):
+                break
+            block_end += 1
+        lines[key_index:block_end] = [replacement]
+    else:
+        lines[key_index] = replacement
     _atomic_replace(path, "".join(lines))
 
 

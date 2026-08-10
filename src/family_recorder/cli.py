@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
-from family_recorder.config import AppConfig, load_config
+from family_recorder.config import DEFAULT_SUMMARY_PROMPT, AppConfig, load_config
 from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
@@ -66,6 +66,11 @@ def _parser() -> argparse.ArgumentParser:
         "set-summary-model", help="Select a Codex summary model; empty uses the account default"
     )
     summary_model.add_argument("--model", required=True)
+    summary_prompt = commands.add_parser(
+        "set-summary-prompt", help="Set the editable instructions used for ChatGPT summaries"
+    )
+    summary_prompt.add_argument("--prompt", required=True)
+    commands.add_parser("reset-summary-prompt", help="Restore the built-in summary instructions")
     commands.add_parser("menu-status", help=argparse.SUPPRESS)
 
     common_terms = commands.add_parser(
@@ -201,6 +206,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         ],
         "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
+        "summary_prompt": config.summary.prompt,
         "common_terms": list(config.whisper.common_terms),
         "speaker_enabled": config.speakers.enabled,
         "speaker_members": profile_store.statuses(config.speakers.members),
@@ -259,6 +265,24 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "summary", "model", args.model.strip()
             )
             print(f"Summary model: {args.model.strip() or 'ChatGPT account default'}")
+            return 0
+        if args.command in {"set-summary-prompt", "reset-summary-prompt"}:
+            prompt = (
+                args.prompt.strip()
+                if args.command == "set-summary-prompt"
+                else DEFAULT_SUMMARY_PROMPT
+            )
+            if not prompt:
+                raise ValueError("摘要 Prompt 不可空白")
+            if len(prompt) > 20_000:
+                raise ValueError("摘要 Prompt 最多 20,000 個字元")
+            update_yaml_value(args.config.expanduser().resolve(), "summary", "prompt", prompt)
+            message = (
+                "摘要 Prompt 已恢復內建預設"
+                if args.command == "reset-summary-prompt"
+                else "摘要 Prompt 已儲存"
+            )
+            print(message)
             return 0
         if args.command == "set-common-terms":
             terms = tuple(term.strip() for term in args.term if term.strip())

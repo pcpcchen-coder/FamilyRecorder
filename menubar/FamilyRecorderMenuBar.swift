@@ -57,6 +57,7 @@ struct RecorderStatus: Decodable {
     let whisperModels: [WhisperModel]
     let downloadableWhisperModels: [DownloadableWhisperModel]
     let summaryModel: String
+    let summaryPrompt: String
     let commonTerms: [String]
     let speakerEnabled: Bool
     let speakerMembers: [SpeakerMember]
@@ -81,6 +82,7 @@ struct RecorderStatus: Decodable {
         case whisperModels = "whisper_models"
         case downloadableWhisperModels = "downloadable_whisper_models"
         case summaryModel = "summary_model"
+        case summaryPrompt = "summary_prompt"
         case commonTerms = "common_terms"
         case speakerEnabled = "speaker_enabled"
         case speakerMembers = "speaker_members"
@@ -447,6 +449,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let custom = item(customTitle, action: #selector(chooseSummaryModel))
         custom.state = status.summaryModel.isEmpty ? .off : .on
         summaryMenu.addItem(custom)
+        summaryMenu.addItem(.separator())
+        summaryMenu.addItem(item("編輯摘要 Prompt…", action: #selector(editSummaryPrompt)))
+        summaryMenu.addItem(item("恢復內建摘要 Prompt…", action: #selector(resetSummaryPrompt)))
         summaryItem.submenu = summaryMenu
         modelMenu.addItem(summaryItem)
         modelItem.submenu = modelMenu
@@ -648,6 +653,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func useDefaultSummaryModel() {
         runSimpleAction(["set-summary-model", "--model", ""], successTitle: "已使用 ChatGPT 帳號預設模型")
+    }
+
+    @objc private func editSummaryPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "編輯 ChatGPT 摘要 Prompt"
+        alert.informativeText =
+            "請描述每天希望如何整理逐字稿。只上傳文字、不得捏造內容，以及時間／人別／方向等保護規則會由 FamilyRecorder 固定附加。"
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 300))
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.borderType = .bezelBorder
+        let textView = NSTextView(frame: scroll.bounds)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.font = NSFont.systemFont(ofSize: 13)
+        textView.string = currentStatus?.summaryPrompt ?? ""
+        scroll.documentView = textView
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let prompt = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            showAlert(title: "摘要 Prompt 不可空白", message: "請輸入摘要需求，或使用恢復內建 Prompt。")
+            return
+        }
+        runSimpleAction(
+            ["set-summary-prompt", "--prompt", prompt],
+            successTitle: "摘要 Prompt 已儲存"
+        )
+    }
+
+    @objc private func resetSummaryPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "恢復內建摘要 Prompt？"
+        alert.informativeText = "目前自訂內容會被內建的繁體中文家庭摘要格式取代。"
+        alert.addButton(withTitle: "恢復預設")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runSimpleAction(["reset-summary-prompt"], successTitle: "已恢復內建摘要 Prompt")
     }
 
     @objc private func editSpeakerMembers() {

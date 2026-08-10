@@ -39,3 +39,18 @@ def test_update_yaml_value_adds_new_section_and_values(tmp_path: Path) -> None:
     assert 'members: ["我", "家人"]' in updated
     assert "enabled: true" in updated
     assert "chunk_seconds: 30" in updated
+
+
+def test_update_yaml_value_replaces_block_scalar_without_leaving_old_lines(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "summary:\n  prompt: |\n    舊的第一行\n    舊的第二行\n  hour: 0\n",
+        encoding="utf-8",
+    )
+
+    update_yaml_value(path, "summary", "prompt", "新的第一行\n新的第二行")
+
+    updated = path.read_text(encoding="utf-8")
+    assert "舊的第一行" not in updated
+    assert "hour: 0" in updated
+    assert 'prompt: "新的第一行\\n新的第二行"' in updated

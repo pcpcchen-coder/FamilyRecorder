@@ -250,3 +250,7 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("summary.provider must be 'codex'")
     if config.summary.timeout_seconds < 30:
         raise ValueError("summary.timeout_seconds must be at least 30")
+    if not config.summary.prompt.strip():
+        raise ValueError("summary.prompt cannot be empty")
+    if len(config.summary.prompt) > 20_000:
+        raise ValueError("summary.prompt cannot exceed 20000 characters")
