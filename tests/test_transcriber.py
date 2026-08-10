@@ -11,13 +11,18 @@ def _fake_whisper(tmp_path: Path, exit_code: int = 0) -> Path:
     script.write_text(
         f"""#!/usr/bin/env python3
 import pathlib
+import json
 import sys
 
 if {exit_code}:
     print("fake whisper failure", file=sys.stderr)
     raise SystemExit({exit_code})
 base = pathlib.Path(sys.argv[sys.argv.index("-of") + 1])
-base.with_suffix(".txt").write_text("  測試  逐字稿。\\n", encoding="utf-8")
+base.with_suffix(".json").write_text(json.dumps({{
+    "transcription": [
+        {{"offsets": {{"from": 250, "to": 1750}}, "text": "  測試  逐字稿。 "}}
+    ]
+}}, ensure_ascii=False), encoding="utf-8")
 """,
         encoding="utf-8",
     )
@@ -34,6 +39,10 @@ def test_whisper_cli_output_is_read_and_normalized(tmp_path: Path) -> None:
         WhisperConfig(binary_path=_fake_whisper(tmp_path), model_path=model)
     )
     assert transcriber.transcribe(audio) == "測試 逐字稿。"
+    detailed = transcriber.transcribe_detailed(audio)
+    assert detailed.segments[0].start_ms == 250
+    assert detailed.segments[0].end_ms == 1750
+    assert detailed.segments[0].text == "測試 逐字稿。"
 
 
 def test_whisper_cli_error_is_actionable(tmp_path: Path) -> None:

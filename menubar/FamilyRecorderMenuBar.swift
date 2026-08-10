@@ -60,6 +60,8 @@ struct RecorderStatus: Decodable {
     let speakerEnabled: Bool
     let speakerMembers: [SpeakerMember]
     let speakerProfilesDir: String
+    let directionEnabled: Bool
+    let directionFrontAngleDegrees: Double
 
     enum CodingKeys: String, CodingKey {
         case paused
@@ -81,6 +83,8 @@ struct RecorderStatus: Decodable {
         case speakerEnabled = "speaker_enabled"
         case speakerMembers = "speaker_members"
         case speakerProfilesDir = "speaker_profiles_dir"
+        case directionEnabled = "direction_enabled"
+        case directionFrontAngleDegrees = "direction_front_angle_degrees"
     }
 }
 
@@ -109,20 +113,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         menu.delegate = self
         statusItem.menu = menu
         refreshStatus(rebuildMenu: true)
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            // A first-run foreground explanation makes the following macOS TCC
+            // sheet reliable and gives the user context before they decide.
+            NSApp.setActivationPolicy(.regular)
+            DispatchQueue.main.async { [weak self] in
+                self?.showInitialMicrophoneAuthorization()
+            }
+        } else {
+            NSApp.setActivationPolicy(.accessory)
+            handleMicrophoneAuthorizationResult()
+        }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            self?.refreshStatus(rebuildMenu: false)
+        }
+    }
+
+    private func handleMicrophoneAuthorizationResult() {
         requestMicrophoneAccess { [weak self] granted in
+            guard let self else { return }
             if !granted {
-                self?.updateStatusIcon(
+                self.updateStatusIcon(
+                    symbol: "mic.slash.circle.fill",
+                    tooltip: "FamilyRecorder 需要麥克風權限"
+                )
+            } else if self.currentStatus?.listenerRunning == false {
+                _ = self.restartListener()
+            }
+        }
+    }
+
+    private func showInitialMicrophoneAuthorization() {
+        let alert = NSAlert()
+        alert.messageText = "讓 FamilyRecorder 開始聆聽"
+        alert.informativeText =
+            "下一步 macOS 會詢問麥克風權限。允許後，FamilyRecorder 才能使用 XVF3800；音訊仍只在這台 Mac 上處理。"
+        alert.addButton(withTitle: "繼續並允許麥克風")
+        alert.addButton(withTitle: "稍後")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            NSApp.setActivationPolicy(.accessory)
+            updateStatusIcon(
+                symbol: "mic.slash.circle.fill",
+                tooltip: "FamilyRecorder 尚未取得麥克風權限"
+            )
+            return
+        }
+        requestMicrophoneAccess { [weak self] granted in
+            NSApp.setActivationPolicy(.accessory)
+            guard let self else { return }
+            if granted {
+                if self.currentStatus?.listenerRunning == false {
+                    _ = self.restartListener()
+                }
+            } else {
+                self.updateStatusIcon(
                     symbol: "mic.slash.circle.fill",
                     tooltip: "FamilyRecorder 需要麥克風權限"
                 )
             }
-        }
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            self?.refreshStatus(rebuildMenu: false)
         }
     }
 
@@ -293,6 +345,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item("家庭人別：\(status.speakerMembers.count) 人 · 已註冊 \(enrolled) 人", enabled: false)
             )
         }
+        menu.addItem(
+            item(
+                status.directionEnabled
+                    ? "聲音方向：已開啟 · 正前方校準 \(Int(status.directionFrontAngleDegrees.rounded()))°"
+                    : "聲音方向：已關閉",
+                enabled: false
+            )
+        )
         menu.addItem(.separator())
 
         if status.paused {
@@ -433,6 +493,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         familyItem.submenu = familyMenu
         menu.addItem(familyItem)
+
+        let directionItem = item("聲音方向")
+        let directionMenu = NSMenu()
+        let directionToggle = item(
+            status.directionEnabled ? "關閉方向判斷" : "開啟方向判斷",
+            action: #selector(toggleDirection)
+        )
+        directionMenu.addItem(directionToggle)
+        directionMenu.addItem(
+            item(
+                "測試目前方向…",
+                action: #selector(probeDirection),
+                enabled: status.directionEnabled
+            )
+        )
+        directionMenu.addItem(
+            item(
+                "把目前位置校準為正前方…",
+                action: #selector(calibrateDirection),
+                enabled: status.directionEnabled
+            )
+        )
+        directionMenu.addItem(.separator())
+        directionMenu.addItem(
+            item("方向只作為音色人別的輔助線索，不是身分確認", enabled: false)
+        )
+        directionItem.submenu = directionMenu
+        menu.addItem(directionItem)
 
         menu.addItem(.separator())
         menu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
@@ -578,6 +666,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.refreshStatus(rebuildMenu: true)
             if restart.0 != 0 {
                 self?.showAlert(title: "設定已儲存，但錄音服務重啟失敗", message: restart.1)
+            }
+        }
+    }
+
+    @objc private func toggleDirection() {
+        let enabled = !(currentStatus?.directionEnabled ?? true)
+        runRecorderAsync(
+            ["set-direction-enabled", "--enabled", enabled ? "true" : "false"]
+        ) { [weak self] status, output in
+            guard let self else { return }
+            guard status == 0 else {
+                self.showAlert(title: "方向設定失敗", message: output)
+                return
+            }
+            let restart = self.restartListener()
+            self.refreshStatus(rebuildMenu: true)
+            self.showAlert(
+                title: enabled ? "方向判斷已開啟" : "方向判斷已關閉",
+                message: restart.0 == 0 ? output : "\(output)\n\(restart.1)"
+            )
+        }
+    }
+
+    @objc private func probeDirection() {
+        runRecorderAsync(["probe-direction", "--seconds", "2"]) { [weak self] status, output in
+            self?.showAlert(
+                title: status == 0 ? "目前聲音方向" : "方向測試失敗",
+                message: output
+            )
+        }
+    }
+
+    @objc private func calibrateDirection() {
+        let alert = NSAlert()
+        alert.messageText = "校準 FamilyRecorder 的正前方"
+        alert.informativeText =
+            "請站在你希望定義為「正前方」的位置。按下開始約 2 秒後，請只有一個人持續自然說話 4 秒。錄音服務會暫停，校準完成後自動恢復。"
+        alert.addButton(withTitle: "開始校準")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let shouldResume = !(currentStatus?.paused ?? false)
+        if shouldResume {
+            let pause = runRecorderSync(["pause"])
+            guard pause.0 == 0 else {
+                showAlert(title: "無法暫停錄音服務", message: pause.1)
+                return
+            }
+        }
+        updateStatusIcon(symbol: "location.circle.fill", tooltip: "正在校準正前方")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self else { return }
+            self.runRecorderAsync(["calibrate-direction", "--seconds", "4"]) {
+                [weak self] status, output in
+                guard let self else { return }
+                if shouldResume {
+                    _ = self.runRecorderSync(["resume"])
+                }
+                let restart = self.restartListener()
+                self.refreshStatus(rebuildMenu: true)
+                if status == 0 && restart.0 == 0 {
+                    self.showAlert(title: "正前方校準完成", message: output)
+                } else {
+                    let details = [output, restart.1]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: "\n")
+                    self.showAlert(title: "方向校準失敗", message: details)
+                }
             }
         }
     }
@@ -920,53 +1077,10 @@ func writeStandardError(_ message: String) {
 }
 
 func authorizeMicrophoneForListener() -> Bool {
-    switch AVCaptureDevice.authorizationStatus(for: .audio) {
-    case .authorized:
-        return true
-    case .notDetermined:
-        let semaphore = DispatchSemaphore(value: 0)
-        var granted = false
-        AVCaptureDevice.requestAccess(for: .audio) { result in
-            granted = result
-            semaphore.signal()
-        }
-        guard semaphore.wait(timeout: .now() + 120) == .success else {
-            writeStandardError("FamilyRecorder 等候麥克風授權逾時。")
-            return false
-        }
-        return granted
-    case .denied, .restricted:
-        return false
-    @unknown default:
-        return false
-    }
-}
-
-final class MicrophoneAuthorizationDelegate: NSObject, NSApplicationDelegate {
-    private(set) var granted = false
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // A regular, foreground first-run process lets macOS present the TCC
-        // dialog reliably even though the normal menu-bar process is hidden.
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            granted = true
-            NSApp.terminate(nil)
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] result in
-                DispatchQueue.main.async {
-                    self?.granted = result
-                    NSApp.terminate(nil)
-                }
-            }
-        case .denied, .restricted:
-            NSApp.terminate(nil)
-        @unknown default:
-            NSApp.terminate(nil)
-        }
-    }
+    // Only the foreground menu app asks for TCC access. Background listener
+    // launches merely read the decision so two simultaneous system prompts can
+    // never deadlock a first install.
+    AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
 }
 
 func runRecorderService(
@@ -1018,14 +1132,6 @@ func runRecorderService(
         writeStandardError("Unable to launch FamilyRecorder \(service): \(error.localizedDescription)")
         exit(70)
     }
-}
-
-if CommandLine.arguments.contains("--authorize-microphone") {
-    let authorizationApplication = NSApplication.shared
-    let authorizationDelegate = MicrophoneAuthorizationDelegate()
-    authorizationApplication.delegate = authorizationDelegate
-    authorizationApplication.run()
-    exit(authorizationDelegate.granted ? 0 : 77)
 }
 
 if let service = argumentValue("--service") {

@@ -40,6 +40,18 @@ speakers:
   min_margin: 0.025
   dominance_threshold: 0.65
 
+# XVF3800 direction-of-arrival telemetry is read separately from its UAC audio.
+# Use the menu-bar calibration while one person speaks from the room's chosen
+# front. Angles saved in transcripts are then relative to that position.
+direction:
+  enabled: true
+  sample_interval_seconds: 0.25
+  front_angle_degrees: 0.0
+  min_speech_samples: 3
+  cluster_tolerance_degrees: 35.0
+  multiple_direction_min_ratio: 0.25
+  usb_timeout_ms: 1000
+
 summary:
   enabled: true
   # Uses the official Codex CLI and its saved "Sign in with ChatGPT" session.
@@ -60,13 +72,14 @@ summary:
 
     1. 事件時間軸（按來源時間先後排列，每項標示「約 HH:MM」）
     2. 家庭成員重點（依逐字稿的「可能說話者」分組）
-    3. 今日重要消息（每項保留約略時間與可能說話者）
-    4. 決策與承諾（每項保留約略時間與可能說話者）
-    5. 待辦事項（如可辨識，分開標示可能說話者、負責人、約略時間與期限）
-    6. 值得追蹤的想法或靈感（每項保留約略時間與可能說話者）
-    7. 人名、專案名、產品名等關鍵實體
-    8. 可能辨識錯誤或需要人工確認的片段
-    9. 100 字內今日摘要
+    3. 對話方向與人別線索（同列時間、可能說話者與來源方向）
+    4. 今日重要消息（每項保留約略時間、可能說話者與來源方向）
+    5. 決策與承諾（每項保留約略時間、可能說話者與來源方向）
+    6. 待辦事項（如可辨識，分開標示可能說話者、負責人、約略時間與期限）
+    7. 值得追蹤的想法或靈感（每項保留約略時間、可能說話者與來源方向）
+    8. 人名、專案名、產品名等關鍵實體
+    9. 可能辨識錯誤或需要人工確認的片段
+    10. 100 字內今日摘要
 
     時間以逐字稿標題中的本地時間為準，只取到分鐘。不可把 30 秒片段的
     起始秒數視為事件精確發生時間；無法對應來源段落時標示「時間不明」，
@@ -76,6 +89,8 @@ summary:
     事件、重要消息、決策、待辦與想法中保留為「可能說話者：某人」，但僅把它
     視為本機近似辨識結果，不可把人別當成已確認事實。可能多人、不確定或
     未標記的片段不得硬分配給任何成員；說話者與待辦負責人也不得混為一談。
+    方向只能輔助音色人別；家庭成員移動、同方向多人或反射聲都可能誤判，
+    不可只靠方向替沒有音色標記的段落指定姓名。
 
 placement_test:
   recording_seconds_per_sentence: 8

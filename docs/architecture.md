@@ -6,9 +6,13 @@ FamilyRecorder intentionally separates the always-on local path from the schedul
 
 `AudioRecorder` selects an input, holds one PortAudio stream open, and emits fixed-duration mono PCM16 chunks. `analyze_audio` runs before a file is created. Only chunks passing both the configured RMS threshold and WebRTC VAD ratio are written to `audio/`.
 
-`WhisperCppTranscriber` invokes `whisper-cli` as a subprocess. Successful text is appended to one date-scoped Markdown file and indexed in SQLite. A failed transcription is indexed as `failed` and keeps its WAV for diagnosis. Retention is independent of transcript retention.
+`WhisperCppTranscriber` invokes `whisper-cli` as a subprocess and reads its JSON segment timestamps. Successful text is appended to one date-scoped Markdown file and indexed in SQLite at Whisper-segment granularity. A failed transcription is indexed as `failed` and keeps its WAV for diagnosis. Retention is independent of transcript retention.
 
-When household speakers are enabled, the same in-memory PCM is divided into short windows and reduced to normalized spectral, pitch, and timing features. Those vectors are compared only with intentionally enrolled local profiles. The result is a conservative whole-chunk hint (`recognized`, `mixed`, or `uncertain`), not word-level diarization or authentication. Enrollment audio is never written; JSON feature profiles are mode `0600` under `speaker-profiles/`.
+When household speakers are enabled, each Whisper-timed PCM slice is reduced to normalized spectral, pitch, and timing features. Those vectors are compared only with intentionally enrolled local profiles. The result is a conservative segment hint (`recognized`, `mixed`, or `uncertain`), not word-level diarization or authentication. Enrollment audio is never written; JSON feature profiles are mode `0600` under `speaker-profiles/`.
+
+`DirectionSampler` runs alongside each 30-second CoreAudio capture and reads the XVF3800 `DOA_VALUE` USB vendor command at a configurable interval. Each sample has a capture-relative millisecond offset, raw azimuth, and firmware speech flag. After Whisper returns segment offsets, direction samples are sliced to the same interval, circularly clustered, rotated by the room-front calibration, and stored both as a segment summary and as rows in `direction_samples`. Direction failures are metadata failures only: they never abort UAC recording or local transcription.
+
+Speaker and direction results remain independent evidence. A stable direction can corroborate a voice label and reveal changes within one 30-second chunk, but it cannot map a location to a person. Multiple significant direction clusters are retained as `multiple`; they are not collapsed to the primary voice label.
 
 ## Cloud summary
 
@@ -16,7 +20,7 @@ When household speakers are enabled, the same in-memory PCM is divided into shor
 
 Transcript headings carry local chunk ranges such as `19:40:00–19:40:30`. A mandatory time-output contract is appended in code independently of the configurable summary prompt. It requires minute-level approximate timestamps, a chronological event timeline, explicit `時間不明` markers, and forbids replacing source time with summary-generation time. The same contract is present in every partial request and the final merge, so chunking cannot silently discard chronology.
 
-The same request path appends an independent speaker-output contract. When a heading carries `可能：name`, `可能多人`, or `不確定`, important timeline events, news, decisions, commitments, tasks, and ideas retain that attribution with explicitly uncertain wording. A separate household-member section groups relevant content by possible speaker. Speaker and task owner remain distinct, and unlabeled or mixed chunks cannot be assigned to a person. Long transcripts split only between complete `### time — speaker` segments, so partial summarization cannot detach speech from its local time/speaker heading; the final merge receives the contract again.
+The same request path appends independent speaker- and direction-output contracts. When a heading carries `可能：name`, `可能多人`, `不確定`, or a direction label, important timeline events, news, decisions, commitments, tasks, and ideas retain those source hints with explicitly uncertain wording. Separate household-member and direction/evidence sections group relevant content. Speaker and task owner remain distinct, direction alone cannot supply a missing name, and unlabeled or mixed segments cannot be assigned to a person. Long transcripts split only between complete `### time — speaker — direction` segments, so partial summarization cannot detach speech from its local evidence heading; the final merge receives both contracts again.
 
 Each Codex invocation uses an ephemeral session, a read-only sandbox, an empty temporary working directory, and ignores user config and project rules. The prompt treats transcript content as untrusted and disallows tool use. The summary runner has no audio decoding or upload implementation. This makes the “text only” boundary testable rather than relying on a prompt instruction.
 
@@ -43,6 +47,7 @@ New data roots contain a `.familyrecorder-data` ownership marker. The helper rej
 ## Explicit non-goals
 
 - Biometric-grade speaker identification, authentication, or word-level diarization
+- Treating DoA as identity, distance, room coordinates, or proof that one person spoke an entire segment
 - Covert recording
 - Live cloud transcription
 - Uploading or remotely backing up raw audio

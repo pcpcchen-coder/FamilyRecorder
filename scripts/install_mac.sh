@@ -30,7 +30,7 @@ case "$WHISPER_MODEL" in
     ;;
 esac
 
-brew install python@3.12 portaudio cmake git
+brew install python@3.12 portaudio libusb cmake git
 
 PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
 mkdir -p "$RUNTIME_ROOT" "$(dirname "$CONFIG_PATH")"

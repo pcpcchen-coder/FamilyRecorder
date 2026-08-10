@@ -59,6 +59,25 @@ def write_wav(path: Path, pcm16_mono: bytes, sample_rate: int) -> None:
         output.writeframes(pcm16_mono)
 
 
+def read_wav_pcm16_mono(path: Path) -> tuple[bytes, int]:
+    with wave.open(str(path), "rb") as source:
+        if source.getsampwidth() != 2 or source.getnchannels() != 1:
+            raise ValueError(f"Expected mono PCM16 WAV: {path}")
+        return source.readframes(source.getnframes()), source.getframerate()
+
+
+def slice_pcm16(
+    pcm16_mono: bytes,
+    sample_rate: int,
+    start_ms: int,
+    end_ms: int,
+) -> bytes:
+    sample_count = len(pcm16_mono) // 2
+    start_sample = min(sample_count, max(0, round(start_ms * sample_rate / 1_000)))
+    end_sample = min(sample_count, max(start_sample, round(end_ms * sample_rate / 1_000)))
+    return pcm16_mono[start_sample * 2 : end_sample * 2]
+
+
 class AudioRecorder:
     def __init__(self, config: AudioConfig, sd_module: Any | None = None) -> None:
         self.config = config

@@ -67,6 +67,9 @@ def test_summary_sends_only_transcript_text_through_hardened_codex_exec(tmp_path
     assert "可能說話者：姓名" in prompt
     assert "可能：家人甲（87%）" in prompt
     assert "說話者" in prompt and "負責人" in prompt
+    assert "對話方向與人別線索" in prompt
+    assert "來源方向：方位 角度" in prompt
+    assert "不可只靠方向" in prompt
     assert "secret.wav" not in prompt
     assert "never upload this" not in prompt
 
@@ -120,6 +123,8 @@ def test_every_chunked_summary_request_keeps_time_contract(tmp_path: Path) -> No
         assert "不得以摘要產生時間代替事件時間" in prompt
         assert "不要因濃縮或去重而把人別省略" in prompt
         assert "可能多人" in prompt
+        assert "方向：多個" in prompt
+        assert "需要人工確認" in prompt
 
 
 def test_check_codex_login_uses_saved_cli_auth() -> None:

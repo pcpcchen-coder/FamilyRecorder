@@ -33,6 +33,7 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert info["CFBundleName"] == "FamilyRecorder"
     assert info["CFBundleExecutable"] == "FamilyRecorder"
     assert info["CFBundleIdentifier"] == APP_BUNDLE_ID
+    assert info["LSUIElement"] is False
     assert "FamilyRecorder" in info["NSMicrophoneUsageDescription"]
 
 
@@ -73,7 +74,8 @@ def test_service_installers_launch_the_native_app_wrapper() -> None:
         assert '"__APP_EXECUTABLE__": app_executable' in script
 
 
-def test_menu_installer_authorizes_through_launch_services() -> None:
+def test_menu_installer_does_not_block_on_microphone_authorization() -> None:
     script = (ROOT / "scripts" / "install_menubar.sh").read_text(encoding="utf-8")
 
-    assert '/usr/bin/open -n -W "$APP_ROOT" --args --authorize-microphone' in script
+    assert "--authorize-microphone" not in script
+    assert 'com.familyrecorder.listener.plist"' in script

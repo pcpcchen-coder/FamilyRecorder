@@ -3,16 +3,14 @@
 在 Apple Silicon Mac 上把 **XVF3800 USB 麥克風陣列**變成常駐、隱私優先的家庭聲音日誌：
 
 ```text
-XVF3800 / XMOS UAC2
-        │
-        ▼
-本機 30 秒 PCM chunk ──► RMS + WebRTC VAD ──► whisper.cpp（zh / Metal）
-              │                                      │
-              └──► 本機家庭人聲近似比對 ────────────┤
-                                                     │
+XVF3800 / XMOS
+        ├── UAC2 音訊 ──► 30 秒 PCM ──► VAD ──► whisper.cpp 時間片段
+        └── USB 控制 ──► 每 0.25 秒 DoA／語音旗標 ───┐
+                    本機家庭人聲近似比對 ────────────┤
+                                                     │ 每小段對齊時間＋音色＋方向
                                 ┌────────────────────┴─────────────┐
                                 ▼                                  ▼
-              含「可能是誰」的每日逐字稿                    listener.sqlite3
+              含「可能是誰／哪個方向」的逐字稿              listener.sqlite3
                                 │
                                 │ 每日排程；只讀取並上傳文字
                                 ▼
@@ -40,15 +38,18 @@ XVF3800 / XMOS UAC2
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
 - 內建原生一鍵解除安裝：可只移除程式與模型並保留家庭資料，或把程式、模型、錄音、逐字稿、資料庫、人聲樣本與設定完整移到垃圾桶。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
+- 透過 XVF3800 獨立 USB 控制介面同步讀取 DoA（Direction of Arrival）；將 Whisper 的數秒級時間片段分別配對音色人別與方向，逐字稿及每日摘要同時保留兩種線索。
+- 選單列可開關方向判斷、測試目前方向，並讓使用者站在指定位置說話，把該方向一鍵校準為房間的 `0° 正前方`。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
-XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)。
+XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角不是 WAV 內的額外聲道，而是另外讀取 `DOA_VALUE`／波束控制資料；Seeed 官方工具也把 Auto selected beam 定義為 LED 指示所用的方向。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
 
 ## 系統需求
 
 - Apple Silicon Mac（`arm64`）
 - macOS、使用者登入階段可使用的 USB 音訊裝置
 - [Homebrew](https://brew.sh/)
+- Homebrew `libusb`（安裝器會自動安裝）
 - 約 2–4 GB 可用空間供程式、模型與 build；錄音資料另計，16 kHz mono PCM16 在持續有語音的極端情況約 2.8 GB／日
 - 雲端摘要才需要網路、官方 Codex CLI，以及可使用 Codex 的 ChatGPT 帳號；不需要 API key。監聽、VAD、轉錄不需要網路
 
@@ -94,7 +95,7 @@ cd FamilyRecorder
 ./scripts/install_menubar.sh
 ```
 
-它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的內部工作；不需要另外安裝 GUI framework。安裝途中 macOS 會以 `FamilyRecorder` 名稱顯示一次麥克風授權提示，請按「允許」。listener、每日摘要與選單列雖然是三個內部工作，macOS 會把它們關聯到同一個 `FamilyRecorder.app`。
+它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的內部工作；不需要另外安裝 GUI framework。首次啟動時會先顯示 FamilyRecorder 的用途說明；按「繼續並允許麥克風」後，再在 macOS 提示按「允許」。授權視窗不會卡住安裝器。listener、每日摘要與選單列雖然是三個內部工作，macOS 會把它們關聯到同一個 `FamilyRecorder.app`。
 
 ### macOS 中看到的名稱
 
@@ -188,6 +189,12 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `speakers.min_similarity` | `0.82` | 聲音特徵最低相似度；提高可減少誤認、但增加「不確定」 |
 | `speakers.min_margin` | `0.025` | 第一名至少要比第二名高出的差距 |
 | `speakers.dominance_threshold` | `0.65` | 一個 chunk 內必須有多少分析視窗同意主要人選 |
+| `direction.enabled` | `true` | 同步讀取 XVF3800 的本機方向遙測；失敗時錄音仍會繼續 |
+| `direction.sample_interval_seconds` | `0.25` | 方向取樣間隔；預設每秒 4 次 |
+| `direction.front_angle_degrees` | `0` | 哪個 XVF3800 原始角度代表房間正前方；建議由選單校準 |
+| `direction.min_speech_samples` | `3` | 一個文字時間片段至少需要幾個帶語音旗標的方向樣本 |
+| `direction.cluster_tolerance_degrees` | `35` | 相近方向合併容許角度 |
+| `direction.multiple_direction_min_ratio` | `0.25` | 第二方向至少佔多少語音樣本才標示多方向 |
 | `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
 | `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
@@ -203,18 +210,19 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 
 1. 事件時間軸；保留約略時間與可能說話者。
 2. 家庭成員重點；依逐字稿實際出現的「可能說話者」分組。
-3. 今日重要消息。
-4. 決策與承諾。
-5. 待辦事項；分開保留可能說話者、明確指派的負責人、提出時間與期限。
-6. 值得追蹤的想法或靈感。
-7. 人名、專案名與產品名等關鍵實體。
-8. 可能辨識錯誤或需要人工確認的片段。
-9. 100 字內的今日摘要。
+3. 對話方向與人別線索；同列時間、可能說話者與來源方向。
+4. 今日重要消息。
+5. 決策與承諾。
+6. 待辦事項；分開保留可能說話者、明確指派的負責人、提出時間與期限。
+7. 值得追蹤的想法或靈感。
+8. 人名、專案名與產品名等關鍵實體。
+9. 可能辨識錯誤或需要人工確認的片段。
+10. 100 字內的今日摘要。
 
 時間來自每日逐字稿的段落標題，而不是讓雲端模型猜測。例如原始資料：
 
 ```markdown
-### 19:40:00–19:40:30 — 可能：家人二（87%）
+### 19:40:07–19:40:12 — 可能：家人二（87%） — 方向：左側 92°；穩定度 80%
 
 明天記得去拿包裹，九點前要出門。
 ```
@@ -224,7 +232,11 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 ```markdown
 ## 事件時間軸
 
-- 約 19:40｜可能說話者：家人二：提到明天要拿包裹，並希望九點前出門。
+- 約 19:40｜可能說話者：家人二｜來源方向：左側 92°：提到明天要拿包裹，並希望九點前出門。
+
+## 對話方向與人別線索
+
+- 約 19:40｜可能說話者：家人二｜來源方向：左側 92°。
 
 ## 家庭成員重點（依可能說話者）
 
@@ -237,11 +249,13 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 - 約 19:40｜可能說話者：家人二：明天拿包裹；預計九點前出門。負責人需確認。
 ```
 
-`19:40:00–19:40:30` 是 30 秒音訊片段的時間範圍，不代表事件精確發生在第一秒。摘要因此只顯示到分鐘並加上「約」；事件跨越相鄰片段時可顯示 `約 19:40–19:41`。無法對應來源段落的資訊必須標示「時間不明」，不可拿摘要執行時間代替，也不可從對話語意自行推測時間。
+`19:40:07–19:40:12` 是 Whisper 文字片段對應的音訊時間範圍，不代表每個字都有鑑識級精準時間。摘要因此只顯示到分鐘並加上「約」；事件跨越相鄰片段時可顯示 `約 19:40–19:41`。無法對應來源段落的資訊必須標示「時間不明」，不可拿摘要執行時間代替，也不可從對話語意自行推測時間。
 
-時間與人別規則都由程式固定附加到每一次 Codex 請求，包括長逐字稿的每個分段與最後整併；即使現有 `config.yaml` 使用舊版或自訂 `summary.prompt`，升級後也會生效。長逐字稿依 `### 時間 — 人別` 的完整段落切分，避免標題與內容被拆到不同請求。所有時間均沿用錄音 Mac 的本地日期與時區。
+時間、人別與方向規則都由程式固定附加到每一次 Codex 請求，包括長逐字稿的每個分段與最後整併；即使現有 `config.yaml` 使用舊版或自訂 `summary.prompt`，升級後也會生效。長逐字稿依完整的 `### 時間 — 人別 — 方向` 段落切分，避免標題與內容被拆到不同請求。所有時間均沿用錄音 Mac 的本地日期與時區。
 
 人別是本機聲音特徵的近似結果，不是已確認身分。摘要一律使用「可能說話者」措辭；同一事件跨多位成員時可列多位或標示「可能多人」，把握不足則保留「不確定／人別未提供」。說話者只代表該片段的可能主要聲音，不能直接推定是事件執行者或待辦負責人。
+
+方向是聲源相對於麥克風的角度，不是人的姓名。當同一文字片段同時有穩定音色與穩定方向時，摘要會並列兩者作為相互參考；家庭成員移動、兩人站在同方向、牆面反射、電視或多人同時說話都可能使方向不準。沒有音色姓名的片段絕不會只靠方向硬指定某位家人。
 
 ### 登入與手動執行
 
@@ -361,7 +375,7 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 3. 逐一點選成員 →「錄製聲音樣本…」。第一次使用時，依 macOS 提示允許 FamilyRecorder 使用麥克風；按下開始後，浮動視窗會在倒數與 15 秒錄音期間持續顯示朗讀範例、剩餘時間及目前狀態。錄音服務會暫停，完成後自動恢復。
 4. 每人最好站在平常說話的位置、以自然音量錄製；環境、麥克風位置或聲音明顯改變時可重新錄製。兒童聲音隨成長變化，建議定期更新。
 
-系統會把 30 秒 chunk 切成數個短視窗，比較音色、頻譜與音高特徵；只有相似度、第一／第二名差距與多視窗一致性都達標才顯示姓名。多人同時說話、電視、距離過遠或把握不足時，會標「可能多人」或「不確定」。目前標的是整段的主要可能說話者，不是逐字逐句分離；錯認仍然可能發生，摘要也被要求不得把此標籤當成已確認事實。
+Whisper 完成一個 30 秒 chunk 後，系統會使用其 JSON 時間戳拆成通常數秒長的文字片段，再對各片段的音訊範圍分別比較音色、頻譜與音高特徵。只有相似度、第一／第二名差距與分析視窗一致性都達標才顯示姓名。多人同時說話、電視、距離過遠或把握不足時，會標「可能多人」或「不確定」。這比整個 30 秒只標一人細緻，但仍是「Whisper 片段級」而不是逐字聲紋鑑識；錯認仍然可能發生。
 
 註冊音訊只存在記憶體中，產生特徵後即丟棄，不會建立 WAV。特徵以權限 `0600` 保存在 `speaker-profiles/`，不會送給 Whisper、Codex 或其他雲端服務；但它仍屬敏感個人資料，應保護 Mac 帳號與備份。刪除成員或選「刪除聲音樣本」會移除對應檔案。
 
@@ -375,6 +389,34 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
   enroll-speaker --name "我" --seconds 15
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" resume
 ```
+
+## 聲音方向＋音色人別
+
+XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vendor control 介面另行讀取。FamilyRecorder 在每個 30 秒錄音期間預設每 0.25 秒保存一次原始角度與 `speech_detected`，再按 Whisper 文字片段的起訖毫秒篩選同時間樣本。相近角度會做環狀分群，因此 `358°` 與 `2°` 會視為同方向；若第二個相隔明顯的方向達到設定比例，該片段標成「方向：多個」。
+
+第一次使用建議校準房間方向：
+
+1. 點選選單列 FamilyRecorder →「聲音方向」→「把目前位置校準為正前方…」。
+2. 站在你想定義為正前方的位置，只讓一個人持續自然說話 4 秒。
+3. 完成後，逐字稿顯示的 `0°` 是該正前方；`90°` 為左側、`180°` 為後方、`270°` 為右側。
+4. 移動或旋轉麥克風後必須重新校準；只墊高而未旋轉通常不需要。
+
+選單中的「測試目前方向…」可在不寫入逐字稿的情況下顯示方位、角度、穩定度與有效樣本數。也可使用：
+
+```bash
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" probe-direction --seconds 2
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" calibrate-direction --seconds 4
+```
+
+方向與音色的結合方式是「同一時間片段並列兩項獨立證據」，不是用座位直接綁定姓名。例如：
+
+```markdown
+### 19:40:07–19:40:12 — 可能：爸爸（87%） — 方向：左側 92°；穩定度 80%
+
+明天記得去拿包裹。
+```
+
+若爸爸移到別的位置，姓名仍由音色近似判斷，方向跟著新的聲源位置改變。兩人坐在相同方位時方向無法分辨兩人；兩個明顯方向或音色判斷衝突時，摘要會保守標示需人工確認。原始 DoA 取樣與聲音特徵只留在本機 SQLite；雲端每日摘要只會收到逐字稿標題中的文字化方向，不會收到音訊、聲音特徵或逐筆 USB 遙測。
 
 ## Mic placement test
 
@@ -429,6 +471,8 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 人別欄位為 `speaker_name`、`speaker_confidence` 與 `speaker_status`；`speaker_status` 可能為 `recognized`、`mixed`、`uncertain` 或 `disabled`。`speaker_confidence` 是本機特徵相似度，不是統計校準後的身分機率。
 
+方向摘要欄位為 `direction_raw_angle_deg`、校準後的 `direction_angle_deg`、`direction_label`、`direction_confidence`（主要方向的樣本占比）、`direction_status`、`direction_spread_deg` 與樣本數；`direction_status` 可能為 `detected`、`multiple`、`uncertain`、`unavailable` 或 `disabled`。`direction_samples` 表另外保存每個文字片段內的毫秒 offset、原始角度及語音旗標，並以 `segment_id` 連回 `segments`。
+
 `summaries` 表以 `summary_date` 為主鍵，另存摘要檔路徑、實際選用的模型標記與建立時間。重新整理同一天時會更新該列。Markdown 摘要中的事件時間仍以逐字稿標題為準，SQLite 的 `created_at` 只是摘要產生時間。
 
 手動執行 retention：
@@ -479,6 +523,10 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 18. 在隔離暫存 HOME 驗證解除安裝兩種模式：保留模式不碰逐字稿與設定；完整模式移除全部 FamilyRecorder 內容；無標記的共用資料夾保留無關檔案。
 19. DMG 同時包含安裝器與解除安裝器，兩者簽章、版本與內含腳本均通過驗證。
 20. `ruff check .`、`ruff format --check .`、`pytest`、Swift typecheck、plist／shell 語法與套件建置全數通過。
+21. `doctor` 的 XVF3800 direction telemetry 顯示 OK；選單「測試目前方向」能在說話時回傳角度。
+22. 校準正前方後，從正前方、左側與右側各說一句，逐字稿分別接近 `0°`、`90°`、`270°`，SQLite 同步保存方向摘要與逐筆樣本。
+23. 同一 30 秒內從兩個不同方向輪流說話時，Whisper 時間片段各自取得相符方向；同時或快速交疊時保守標示多方向／不確定。
+24. 每日摘要包含「對話方向與人別線索」，重要項目保留來源方向；沒有音色姓名時不會只靠方向指定家人。
 
 ## 常見問題
 
@@ -494,6 +542,10 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 
 **人別常顯示不確定／認錯人**：讓每位成員在相同麥克風位置重新錄製自然語音，避免電視、音樂與多人同時說話。若誤認多，提高 `min_similarity` 或 `min_margin`；若大多不確定，才小幅降低。這項功能不能用於門禁、付款、家長監護或任何需要確認身分的用途。
 
+**方向顯示無法讀取**：確認是 VID `0x2886`／PID `0x001A` 的 reSpeaker XVF3800，執行 `brew install libusb`，再從選單執行「檢查系統狀態」。音訊仍可錄到並不代表 USB vendor control 一定可讀；FamilyRecorder 會保留錄音並把方向標成無法讀取，不會讓 listener 因方向功能停止。
+
+**方向和人所在位置不一致**：先確認麥克風沒有旋轉，再重新執行「把目前位置校準為正前方」。牆面反射、電視、喇叭回音、多人同時說話或兩人位於相同方位都可能干擾 DoA。方向是輔助線索，不是人別或距離感測器。
+
 **聲音樣本一直建立失敗**：確認「系統設定 → 隱私權與安全性 → 麥克風」中的 FamilyRecorder 已開啟。選單列程式會在錄製樣本前主動檢查權限；未允許時不會開始一段必定失敗的錄音，並可直接打開對應的系統設定頁。
 
 **Whisper 變慢或發熱**：把模型改成 `medium` 或 `small` 並更新 YAML；不要只增加 threads。確認安裝輸出包含 Metal，且 `doctor` 指向正確 build。
@@ -503,6 +555,8 @@ listener 遇到拔線或裝置暫時不可用時會依 `audio.retry_seconds` 重
 **摘要沒有事件時間**：確認已升級到 0.6.0 以上，再對同一天重新執行 `summary --date YYYY-MM-DD`。舊摘要檔不會自行重寫；新版在每次單段、分段與最終整併請求都會附加時間輸出規則，現有自訂 prompt 不需手動修改。
 
 **摘要沒有保留人別**：確認已升級到 0.8.0 以上，並先檢查當日逐字稿標題是否真的有「可能：姓名／可能多人／不確定」。舊摘要不會自動重寫；重新整理指定日期後，新版會在事件時間軸、家庭成員重點、消息、決策、待辦與想法中盡可能保留可能說話者。若來源片段本身沒有人別，摘要不會自行猜測。
+
+**摘要沒有方向資訊**：方向功能只會影響升級後新產生的逐字稿片段。先確認逐字稿標題含「方向：…」，再重新整理指定日期；0.10.0 會要求每次分段與最終摘要保留來源方向，並新增「對話方向與人別線索」。
 
 **選單列沒有圖示**：重跑 `./scripts/install_menubar.sh`，再檢查 `launchctl print "gui/$UID/com.familyrecorder.menubar"` 與 `menubar.error.log`。選單的「結束」是刻意正常退出，LaunchAgent 不會立即重開；重跑安裝腳本即可。
 

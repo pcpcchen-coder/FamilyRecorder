@@ -44,6 +44,5 @@ PY
 plutil -lint "$PLIST"
 launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$UID" "$PLIST"
-launchctl kickstart -k "gui/$UID/com.familyrecorder.listener"
 echo "Installed and started com.familyrecorder.listener"
 echo "Log: $LOG_DIR/listener.log"

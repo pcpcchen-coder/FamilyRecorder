@@ -57,11 +57,23 @@ class SpeakerConfig:
     dominance_threshold: float = 0.65
 
 
+@dataclass(frozen=True)
+class DirectionConfig:
+    enabled: bool = True
+    sample_interval_seconds: float = 0.25
+    front_angle_degrees: float = 0.0
+    min_speech_samples: int = 3
+    cluster_tolerance_degrees: float = 35.0
+    multiple_direction_min_ratio: float = 0.25
+    usb_timeout_ms: int = 1_000
+
+
 DEFAULT_SUMMARY_PROMPT = """\
 你是家庭聲音日誌整理助手。只根據逐字稿內容整理，不得補造事件。
 輸出繁體中文 Markdown，列出事件時間軸、依可能說話者整理的家庭成員重點、
+對話方向與人別線索、
 重要消息、決策、待辦、想法、關鍵實體、需要人工確認的片段，以及 100 字內摘要。
-各項保留來源段落的約略時間與可能說話者；無法對應時明確標示時間或人別不明。
+各項保留來源段落的約略時間、可能說話者與收音方向；無法對應時明確標示不明。
 """
 
 
@@ -91,6 +103,7 @@ class AppConfig:
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     speakers: SpeakerConfig = field(default_factory=SpeakerConfig)
+    direction: DirectionConfig = field(default_factory=DirectionConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     placement_test: PlacementTestConfig = field(default_factory=PlacementTestConfig)
 
@@ -150,6 +163,8 @@ def load_config(path: str | Path) -> AppConfig:
         speaker_values["members"] = tuple(str(value).strip() for value in members)
     speakers = SpeakerConfig(**speaker_values)
 
+    direction = DirectionConfig(**_known_values(DirectionConfig, raw.get("direction", {})))
+
     summary = SummaryConfig(**_known_values(SummaryConfig, raw.get("summary", {})))
 
     placement_values = _known_values(PlacementTestConfig, raw.get("placement_test", {}))
@@ -166,6 +181,7 @@ def load_config(path: str | Path) -> AppConfig:
         whisper=whisper,
         storage=storage,
         speakers=speakers,
+        direction=direction,
         summary=summary,
         placement_test=placement,
     )
@@ -201,6 +217,18 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("speakers.min_margin must be between 0 and 1")
     if not 0.5 <= config.speakers.dominance_threshold <= 1:
         raise ValueError("speakers.dominance_threshold must be between 0.5 and 1")
+    if not 0.1 <= config.direction.sample_interval_seconds <= 5:
+        raise ValueError("direction.sample_interval_seconds must be between 0.1 and 5")
+    if not 0 <= config.direction.front_angle_degrees < 360:
+        raise ValueError("direction.front_angle_degrees must be between 0 and 360")
+    if config.direction.min_speech_samples < 1:
+        raise ValueError("direction.min_speech_samples must be at least 1")
+    if not 5 <= config.direction.cluster_tolerance_degrees <= 90:
+        raise ValueError("direction.cluster_tolerance_degrees must be between 5 and 90")
+    if not 0.1 <= config.direction.multiple_direction_min_ratio <= 0.5:
+        raise ValueError("direction.multiple_direction_min_ratio must be between 0.1 and 0.5")
+    if not 100 <= config.direction.usb_timeout_ms <= 10_000:
+        raise ValueError("direction.usb_timeout_ms must be between 100 and 10000")
     if not 0 <= config.summary.hour <= 23 or not 0 <= config.summary.minute <= 59:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:

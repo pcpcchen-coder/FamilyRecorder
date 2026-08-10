@@ -3,11 +3,20 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 
-from family_recorder.audio import AudioChunk, AudioRecorder, CaptureInterrupted, write_wav
+from family_recorder.audio import (
+    AudioChunk,
+    AudioRecorder,
+    CaptureInterrupted,
+    read_wav_pcm16_mono,
+    slice_pcm16,
+    write_wav,
+)
 from family_recorder.config import AppConfig
 from family_recorder.control import ControlStateError, read_pause_state
+from family_recorder.direction import DirectionSampler, DirectionSummary, direction_for_interval
 from family_recorder.metrics import AudioAnalysis, analyze_audio
 from family_recorder.speakers import (
     SpeakerIdentification,
@@ -39,26 +48,90 @@ def _transcribe_segment(
     chunk: AudioChunk,
     audio_path: Path,
     analysis: AudioAnalysis,
-    speaker: SpeakerIdentification | None,
+    direction: DirectionSummary,
     *,
     raise_errors: bool,
 ) -> None:
     try:
         with Storage(config.storage) as storage:
             try:
-                text = transcriber.transcribe(audio_path)
-                status = "transcribed" if text else "empty"
-                storage.save_segment(
-                    chunk,
-                    audio_path,
-                    analysis,
-                    text,
-                    status=status,
-                    speaker=speaker,
-                )
-                if text:
-                    LOGGER.info("Transcript stored (%d characters)", len(text))
+                result = transcriber.transcribe_detailed(audio_path)
+                if result.segments:
+                    pcm16_mono, sample_rate = read_wav_pcm16_mono(audio_path)
+                    profiles = []
+                    if config.speakers.enabled and config.speakers.members:
+                        profile_store = SpeakerProfileStore(config.storage.data_dir)
+                        try:
+                            profiles = [
+                                profile
+                                for name in config.speakers.members
+                                if (profile := profile_store.load(name)) is not None
+                            ]
+                        except SpeakerProfileError as exc:
+                            LOGGER.error("Speaker profile ignored: %s", exc)
+                    maximum_ms = round((chunk.ended_at - chunk.started_at).total_seconds() * 1_000)
+                    for transcript_segment in result.segments:
+                        start_ms = min(maximum_ms, max(0, transcript_segment.start_ms))
+                        end_ms = min(
+                            maximum_ms,
+                            max(start_ms, transcript_segment.end_ms),
+                        )
+                        segment_pcm = slice_pcm16(
+                            pcm16_mono,
+                            sample_rate,
+                            start_ms,
+                            end_ms,
+                        )
+                        speaker: SpeakerIdentification | None = None
+                        if config.speakers.enabled and profiles:
+                            speaker = identify_speaker(
+                                segment_pcm,
+                                sample_rate,
+                                profiles,
+                                config.speakers,
+                            )
+                        segment_direction = direction_for_interval(
+                            direction,
+                            config.direction,
+                            start_ms,
+                            end_ms,
+                        )
+                        segment_chunk = AudioChunk(
+                            b"",
+                            sample_rate,
+                            chunk.started_at + timedelta(milliseconds=start_ms),
+                            chunk.started_at + timedelta(milliseconds=end_ms),
+                            chunk.overflowed,
+                        )
+                        storage.save_segment(
+                            segment_chunk,
+                            audio_path,
+                            analysis,
+                            transcript_segment.text,
+                            speaker=speaker,
+                            direction=segment_direction,
+                        )
+                        if speaker and speaker.status == "recognized":
+                            LOGGER.info(
+                                "Approximate speaker at +%.1fs: %s (similarity %.1f%%)",
+                                start_ms / 1_000,
+                                speaker.label,
+                                (speaker.confidence or 0) * 100,
+                            )
+                    LOGGER.info(
+                        "Transcript stored (%d characters in %d timed segments)",
+                        len(result.text),
+                        len(result.segments),
+                    )
                 else:
+                    storage.save_segment(
+                        chunk,
+                        audio_path,
+                        analysis,
+                        "",
+                        status="empty",
+                        direction=direction,
+                    )
                     LOGGER.info("Whisper returned no text")
                 if config.storage.delete_audio_after_transcription:
                     audio_path.unlink(missing_ok=True)
@@ -70,7 +143,7 @@ def _transcribe_segment(
                     "",
                     status="failed",
                     error=str(exc)[-2_000:],
-                    speaker=speaker,
+                    direction=direction,
                 )
                 LOGGER.exception("Transcription failed; audio retained at %s", audio_path)
                 if raise_errors:
@@ -85,7 +158,6 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
     recorder = AudioRecorder(config.audio)
     transcriber = WhisperCppTranscriber(config.whisper)
     transcriber.validate()
-    profile_store = SpeakerProfileStore(config.storage.data_dir)
 
     with (
         Storage(config.storage) as storage,
@@ -104,6 +176,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
 
         processed = 0
         pause_was_logged = False
+        direction_error_was_logged = False
         while True:
             try:
                 pause_state = read_pause_state(config.storage.data_dir)
@@ -132,11 +205,16 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                         config.audio.sample_rate,
                     )
                     while True:
+                        direction_sampler = DirectionSampler(config.direction)
+                        direction_sampler.start()
                         try:
-                            chunk = recorder.read_chunk(
-                                stream,
-                                stop_requested=lambda: _pause_requested(config),
-                            )
+                            try:
+                                chunk = recorder.read_chunk(
+                                    stream,
+                                    stop_requested=lambda: _pause_requested(config),
+                                )
+                            finally:
+                                direction = direction_sampler.stop()
                         except CaptureInterrupted:
                             LOGGER.info("Pause activated; discarded the in-progress chunk")
                             pause_was_logged = True
@@ -151,36 +229,32 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             _format_optional(analysis.snr_db),
                             chunk.overflowed,
                         )
+                        if direction.status == "detected":
+                            LOGGER.info(
+                                "Direction: %s %.0f° (stability %.1f%%, %d speech samples)",
+                                direction.label,
+                                direction.angle_degrees or 0,
+                                (direction.confidence or 0) * 100,
+                                direction.speech_sample_count,
+                            )
+                            direction_error_was_logged = False
+                        elif direction.status == "multiple":
+                            LOGGER.info(
+                                "Direction: multiple (%s)",
+                                ", ".join(
+                                    f"{cluster.label} {cluster.angle_degrees:.0f}°"
+                                    for cluster in direction.clusters[:3]
+                                ),
+                            )
+                            direction_error_was_logged = False
+                        elif direction.status == "unavailable" and not direction_error_was_logged:
+                            LOGGER.warning("Direction telemetry unavailable: %s", direction.error)
+                            direction_error_was_logged = True
                         if not analysis.keep:
                             LOGGER.info("Chunk skipped by silence/VAD gate")
                             if once:
                                 return
                             continue
-
-                        speaker: SpeakerIdentification | None = None
-                        if config.speakers.enabled and config.speakers.members:
-                            try:
-                                profiles = [
-                                    profile
-                                    for name in config.speakers.members
-                                    if (profile := profile_store.load(name)) is not None
-                                ]
-                                speaker = identify_speaker(
-                                    chunk.pcm16_mono,
-                                    chunk.sample_rate,
-                                    profiles,
-                                    config.speakers,
-                                )
-                                if speaker.status == "recognized":
-                                    LOGGER.info(
-                                        "Approximate speaker: %s (similarity %.1f%%)",
-                                        speaker.label,
-                                        (speaker.confidence or 0) * 100,
-                                    )
-                                elif profiles:
-                                    LOGGER.info("Approximate speaker: %s", speaker.status)
-                            except SpeakerProfileError as exc:
-                                LOGGER.error("Speaker profile ignored: %s", exc)
 
                         audio_path = storage.audio_path_for(chunk.started_at)
                         write_wav(audio_path, chunk.pcm16_mono, chunk.sample_rate)
@@ -201,7 +275,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             stored_chunk,
                             audio_path,
                             analysis,
-                            speaker,
+                            direction,
                             raise_errors=once,
                         )
 

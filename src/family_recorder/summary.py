@@ -62,6 +62,22 @@ SPEAKER_OUTPUT_CONTRACT = """\
   不得寫成已確認某人說過或做過某事。
 """
 
+DIRECTION_OUTPUT_CONTRACT = """\
+收音方向規則（所有摘要請固定遵守）：
+- 原始逐字稿的段落標題可能含 `方向：左前方 45°（穩定度 80%）`、`方向：多個`、
+  `方向：不確定` 或 `方向：無法讀取`。這是 XVF3800 在該語句時間範圍內偵測到的
+  聲源方向；0° 是設定中校準的正前方，不是人物身分。
+- 事件時間軸、重要消息、決策、承諾、待辦與想法只要來源有穩定方向，都要保留為
+  `來源方向：方位 角度`；多方向、不確定或無法讀取時也要如實保留，不得省略或猜測。
+- 另輸出 `## 對話方向與人別線索`，按時間整理有意義的方向變化，並同列來源段落的
+  `可能說話者`；相鄰且方向與可能說話者相同的項目可以合併成時間範圍。
+- 當同一段同時有音色人別與穩定方向時，可寫成「可能說話者：某人；來源方向：左側 90°」，
+  但方向只能作為輔助線索。家庭成員移動、兩人位於同方向、反射聲或電視都可能造成誤判，
+  絕對不可只靠方向替沒有音色標記的段落指定姓名。
+- 標示 `方向：多個` 的片段不得說成整段都由單一人物說出；若音色標記仍只有一人，請列入
+  需要人工確認的片段，而不是忽略方向衝突。
+"""
+
 TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
 
 
@@ -180,7 +196,8 @@ class DailySummaryRunner:
     def _request(self, instructions: str, content: str) -> str:
         prompt = (
             f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
-            f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DATA_BOUNDARY}\n\n"
+            f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DIRECTION_OUTPUT_CONTRACT}\n\n"
+            f"{DATA_BOUNDARY}\n\n"
             "--- FAMILYRECORDER TEXT START ---\n"
             f"{content.strip()}\n"
             "--- FAMILYRECORDER TEXT END ---\n"

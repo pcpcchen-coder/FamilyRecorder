@@ -8,6 +8,8 @@ import platform
 import subprocess
 import sys
 import time
+from contextlib import suppress
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from family_recorder.config import AppConfig, load_config
 from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
+from family_recorder.direction import XVF3800USBReader, capture_direction
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
@@ -80,6 +83,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     delete_profile.add_argument("--name", required=True)
 
+    direction_enabled = commands.add_parser(
+        "set-direction-enabled", help="Enable or disable XVF3800 direction telemetry"
+    )
+    direction_enabled.add_argument("--enabled", choices=("true", "false"), required=True)
+    calibrate_direction = commands.add_parser(
+        "calibrate-direction", help="Use the current speaking position as room front (0 degrees)"
+    )
+    calibrate_direction.add_argument("--seconds", type=float, default=4.0)
+    probe_direction = commands.add_parser(
+        "probe-direction", help="Sample and display XVF3800 direction telemetry"
+    )
+    probe_direction.add_argument("--seconds", type=float, default=2.0)
+
     placement = commands.add_parser("placement-test", help="Compare microphone positions")
     placement.add_argument("--positions", nargs="+", default=["A", "B", "C"])
     placement.add_argument("--seconds", type=int)
@@ -107,6 +123,22 @@ def _doctor(config: AppConfig) -> int:
     except Exception as exc:
         print(f"[MISSING] audio input: {exc}")
         failed = True
+    if config.direction.enabled:
+        reader = None
+        try:
+            reader = XVF3800USBReader(timeout_ms=config.direction.usb_timeout_ms)
+            angle, speech = reader.read()
+            print(
+                f"[OK] XVF3800 direction telemetry: raw {angle:.0f} degrees, "
+                f"speech={'yes' if speech else 'no'}"
+            )
+        except Exception as exc:
+            print(f"[MISSING] XVF3800 direction telemetry: {exc}")
+            failed = True
+        finally:
+            if reader is not None:
+                with suppress(Exception):
+                    reader.close()
     if config.summary.enabled:
         try:
             binary = resolve_codex_binary(config.summary.codex_binary_path)
@@ -167,6 +199,8 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "speaker_enabled": config.speakers.enabled,
         "speaker_members": profile_store.statuses(config.speakers.members),
         "speaker_profiles_dir": str(profile_store.directory),
+        "direction_enabled": config.direction.enabled,
+        "direction_front_angle_degrees": config.direction.front_angle_degrees,
     }
 
 
@@ -260,6 +294,45 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("找不到這位家庭成員")
             deleted = SpeakerProfileStore(config.storage.data_dir).delete(args.name)
             print("聲音樣本已刪除" if deleted else "這位成員尚未建立聲音樣本")
+            return 0
+        if args.command == "set-direction-enabled":
+            enabled = args.enabled == "true"
+            update_yaml_value(args.config.expanduser().resolve(), "direction", "enabled", enabled)
+            print("方向判斷已開啟" if enabled else "方向判斷已關閉")
+            return 0
+        if args.command in {"calibrate-direction", "probe-direction"}:
+            if not 1 <= args.seconds <= 15:
+                raise ValueError("方向取樣時間必須在 1 到 15 秒之間")
+            direction_config = replace(config.direction, enabled=True)
+            result = capture_direction(direction_config, args.seconds)
+            if result.status == "unavailable":
+                raise RuntimeError(f"無法讀取 XVF3800 方向：{result.error}")
+            if result.status == "uncertain":
+                raise RuntimeError("沒有取得足夠的連續語音方向；請持續說話後重試")
+            if result.status == "multiple":
+                detail = "、".join(
+                    f"{cluster.label} {cluster.angle_degrees:.0f}°"
+                    for cluster in result.clusters[:3]
+                )
+                raise RuntimeError(f"同時偵測到多個方向（{detail}）；請只讓一個人在正前方說話")
+            assert result.raw_angle_degrees is not None
+            if args.command == "calibrate-direction":
+                raw_angle = round(result.raw_angle_degrees, 1)
+                update_yaml_value(
+                    args.config.expanduser().resolve(),
+                    "direction",
+                    "front_angle_degrees",
+                    raw_angle,
+                )
+                update_yaml_value(args.config.expanduser().resolve(), "direction", "enabled", True)
+                print(f"方向正前方已校準：XVF3800 原始角度 {raw_angle:.1f}°")
+            else:
+                print(
+                    f"方向：{result.label} {result.angle_degrees:.0f}°；"
+                    f"原始角度 {result.raw_angle_degrees:.0f}°；"
+                    f"穩定度 {(result.confidence or 0):.0%}；"
+                    f"語音樣本 {result.speech_sample_count}/{result.total_sample_count}"
+                )
             return 0
         if args.command == "menu-status":
             print(json.dumps(_menu_status(config, args.config), ensure_ascii=False))

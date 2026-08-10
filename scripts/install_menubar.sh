@@ -16,6 +16,8 @@ UNINSTALLER_ROOT="$RUNTIME_ROOT/解除安裝 FamilyRecorder.app"
 UNINSTALLER_EXECUTABLE="$UNINSTALLER_ROOT/Contents/MacOS/FamilyRecorderUninstaller"
 UNINSTALLER_RESOURCES="$UNINSTALLER_ROOT/Contents/Resources"
 PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.menubar.plist"
+LISTENER_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.listener.plist"
+SUMMARY_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.summary.plist"
 TEMPLATE="$REPO_ROOT/launchd/com.familyrecorder.menubar.plist.in"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
@@ -36,7 +38,17 @@ print(load_config(sys.argv[1]).storage.data_dir / "logs")
 PY
 )"
 
+# Stop every process hosted by this bundle before replacing its executable.
+# Remember existing services so running this helper by itself is also safe.
+LISTENER_WAS_LOADED=false
+SUMMARY_WAS_LOADED=false
+launchctl print "gui/$UID/com.familyrecorder.listener" >/dev/null 2>&1 && \
+  LISTENER_WAS_LOADED=true
+launchctl print "gui/$UID/com.familyrecorder.summary" >/dev/null 2>&1 && \
+  SUMMARY_WAS_LOADED=true
 launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
+launchctl bootout "gui/$UID" "$LISTENER_PLIST" 2>/dev/null || true
+launchctl bootout "gui/$UID" "$SUMMARY_PLIST" 2>/dev/null || true
 mkdir -p \
   "$APP_ROOT/Contents/MacOS" \
   "$UNINSTALLER_ROOT/Contents/MacOS" \
@@ -73,12 +85,6 @@ install -m 755 \
 codesign --force --deep --sign - "$UNINSTALLER_ROOT"
 plutil -lint "$UNINSTALLER_ROOT/Contents/Info.plist"
 
-# Launch once through Launch Services so TCC records the bundle identity and
-# presents "FamilyRecorder" in the microphone permission panel. The special
-# mode exits immediately after the existing decision is read or the user
-# answers the first-run prompt; launchd starts the normal menu app afterward.
-/usr/bin/open -n -W "$APP_ROOT" --args --authorize-microphone
-
 "$RUNTIME_ROOT/venv/bin/python" - \
   "$TEMPLATE" "$PLIST" "$APP_EXECUTABLE" "$PROGRAM" "$CONFIG_PATH" "$LOG_DIR" \
   "$UNINSTALLER_ROOT" <<'PY'
@@ -101,5 +107,11 @@ PY
 
 plutil -lint "$PLIST"
 launchctl bootstrap "gui/$UID" "$PLIST"
-launchctl kickstart -k "gui/$UID/com.familyrecorder.menubar"
+if [[ "$LISTENER_WAS_LOADED" == true && -f "$LISTENER_PLIST" ]]; then
+  launchctl bootstrap "gui/$UID" "$LISTENER_PLIST"
+fi
+if [[ "$SUMMARY_WAS_LOADED" == true && -f "$SUMMARY_PLIST" ]]; then
+  launchctl bootstrap "gui/$UID" "$SUMMARY_PLIST"
+fi
 echo "Installed and started the FamilyRecorder menu bar app"
+echo "The menu app will request microphone access without blocking the installer."

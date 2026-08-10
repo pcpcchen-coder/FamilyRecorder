@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from family_recorder.audio import AudioChunk
 from family_recorder.config import StorageConfig
+from family_recorder.direction import DirectionSummary
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.speakers import SpeakerIdentification
 
@@ -29,6 +31,15 @@ CREATE TABLE IF NOT EXISTS segments (
     speaker_name TEXT,
     speaker_confidence REAL,
     speaker_status TEXT,
+    direction_raw_angle_deg REAL,
+    direction_angle_deg REAL,
+    direction_label TEXT,
+    direction_confidence REAL,
+    direction_status TEXT,
+    direction_spread_deg REAL,
+    direction_speech_samples INTEGER,
+    direction_total_samples INTEGER,
+    direction_clusters_json TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -37,6 +48,17 @@ ON segments(transcript_date, started_at);
 
 CREATE INDEX IF NOT EXISTS idx_segments_status
 ON segments(status);
+
+CREATE TABLE IF NOT EXISTS direction_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    offset_ms INTEGER NOT NULL,
+    raw_angle_deg REAL NOT NULL,
+    speech_detected INTEGER NOT NULL CHECK(speech_detected IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_direction_samples_segment_offset
+ON direction_samples(segment_id, offset_ms);
 
 CREATE TABLE IF NOT EXISTS summaries (
     summary_date TEXT PRIMARY KEY,
@@ -78,6 +100,15 @@ class Storage:
             "speaker_name": "TEXT",
             "speaker_confidence": "REAL",
             "speaker_status": "TEXT",
+            "direction_raw_angle_deg": "REAL",
+            "direction_angle_deg": "REAL",
+            "direction_label": "TEXT",
+            "direction_confidence": "REAL",
+            "direction_status": "TEXT",
+            "direction_spread_deg": "REAL",
+            "direction_speech_samples": "INTEGER",
+            "direction_total_samples": "INTEGER",
+            "direction_clusters_json": "TEXT",
         }
         with self.connection:
             for name, declaration in additions.items():
@@ -113,6 +144,7 @@ class Storage:
         status: str = "transcribed",
         error: str | None = None,
         speaker: SpeakerIdentification | None = None,
+        direction: DirectionSummary | None = None,
     ) -> int:
         if status == "transcribed" and text:
             transcript_path = self.transcript_path_for(chunk.started_at.date())
@@ -132,19 +164,59 @@ class Storage:
                     speaker_label = " — 人別：可能多人"
                 elif speaker and speaker.status == "uncertain":
                     speaker_label = " — 人別：不確定"
+                direction_label = ""
+                if direction and direction.status == "detected" and direction.label:
+                    stability = (
+                        f"；穩定度 {direction.confidence:.0%}"
+                        if direction.confidence is not None
+                        else ""
+                    )
+                    direction_label = (
+                        f" — 方向：{direction.label} {direction.angle_degrees:.0f}°{stability}"
+                    )
+                elif direction and direction.status == "multiple":
+                    clusters = "、".join(
+                        f"{cluster.label} {cluster.angle_degrees:.0f}°"
+                        for cluster in direction.clusters[:3]
+                    )
+                    direction_label = f" — 方向：多個（{clusters}）"
+                elif direction and direction.status == "uncertain":
+                    direction_label = " — 方向：不確定"
+                elif direction and direction.status == "unavailable":
+                    direction_label = " — 方向：無法讀取"
                 transcript.write(
                     f"### {chunk.started_at:%H:%M:%S}–{chunk.ended_at:%H:%M:%S}"
-                    f"{speaker_label}\n\n{text}\n\n"
+                    f"{speaker_label}{direction_label}\n\n{text}\n\n"
                 )
 
+        clusters_json = None
+        if direction:
+            clusters_json = json.dumps(
+                [
+                    {
+                        "raw_angle_deg": round(cluster.raw_angle_degrees, 3),
+                        "angle_deg": round(cluster.angle_degrees, 3),
+                        "label": cluster.label,
+                        "sample_count": cluster.sample_count,
+                        "ratio": round(cluster.ratio, 6),
+                    }
+                    for cluster in direction.clusters
+                ],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         with self.connection:
             cursor = self.connection.execute(
                 """
                 INSERT INTO segments (
                     transcript_date, started_at, ended_at, audio_path, text,
                     rms_dbfs, snr_db, speech_ratio, status, error,
-                    speaker_name, speaker_confidence, speaker_status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    speaker_name, speaker_confidence, speaker_status,
+                    direction_raw_angle_deg, direction_angle_deg, direction_label,
+                    direction_confidence, direction_status, direction_spread_deg,
+                    direction_speech_samples, direction_total_samples,
+                    direction_clusters_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chunk.started_at.date().isoformat(),
@@ -160,10 +232,37 @@ class Storage:
                     speaker.label if speaker else None,
                     speaker.confidence if speaker else None,
                     speaker.status if speaker else None,
+                    direction.raw_angle_degrees if direction else None,
+                    direction.angle_degrees if direction else None,
+                    direction.label if direction else None,
+                    direction.confidence if direction else None,
+                    direction.status if direction else None,
+                    direction.spread_degrees if direction else None,
+                    direction.speech_sample_count if direction else None,
+                    direction.total_sample_count if direction else None,
+                    clusters_json,
                     datetime.now().astimezone().isoformat(),
                 ),
             )
-        return int(cursor.lastrowid)
+            row_id = int(cursor.lastrowid)
+            if direction and direction.samples:
+                self.connection.executemany(
+                    """
+                    INSERT INTO direction_samples (
+                        segment_id, offset_ms, raw_angle_deg, speech_detected
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            row_id,
+                            sample.offset_ms,
+                            sample.raw_angle_degrees,
+                            int(sample.speech_detected),
+                        )
+                        for sample in direction.samples
+                    ),
+                )
+        return row_id
 
     def record_summary(self, target_date: date, path: Path, model: str) -> None:
         with self.connection:

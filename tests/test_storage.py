@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from family_recorder.audio import AudioChunk, write_wav
-from family_recorder.config import StorageConfig
+from family_recorder.config import DirectionConfig, StorageConfig
+from family_recorder.direction import DirectionSample, summarize_direction
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.speakers import SpeakerIdentification
 from family_recorder.storage import Storage
@@ -91,4 +92,53 @@ def test_existing_database_gets_speaker_columns(tmp_path: Path) -> None:
         columns = {
             row[1] for row in storage.connection.execute("pragma table_info(segments)").fetchall()
         }
-    assert {"speaker_name", "speaker_confidence", "speaker_status"} <= columns
+    assert {
+        "speaker_name",
+        "speaker_confidence",
+        "speaker_status",
+        "direction_angle_deg",
+        "direction_label",
+        "direction_status",
+        "direction_clusters_json",
+    } <= columns
+
+
+def test_segment_stores_direction_summary_and_samples(tmp_path: Path) -> None:
+    started = datetime(2026, 8, 9, 12, 30, tzinfo=UTC)
+    chunk = AudioChunk(b"\0" * 320, 16_000, started, started + timedelta(seconds=2))
+    analysis = AudioAnalysis(True, -20.0, 12.5, 0.7, 100)
+    direction = summarize_direction(
+        [
+            DirectionSample(0, 88, True),
+            DirectionSample(250, 90, True),
+            DirectionSample(500, 92, True),
+        ],
+        DirectionConfig(min_speech_samples=2),
+    )
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        audio_path = storage.audio_path_for(started)
+        row_id = storage.save_segment(
+            chunk,
+            audio_path,
+            analysis,
+            "這是左邊的人說的。",
+            direction=direction,
+        )
+        transcript = storage.transcript_path_for(started.date()).read_text(encoding="utf-8")
+        assert "方向：左側 90°" in transcript
+        row = storage.connection.execute(
+            """
+            select direction_raw_angle_deg, direction_angle_deg, direction_label,
+                   direction_status, direction_speech_samples, direction_total_samples
+            from segments where id = ?
+            """,
+            (row_id,),
+        ).fetchone()
+        assert row == (90.0, 90.0, "左側", "detected", 3, 3)
+        samples = storage.connection.execute(
+            "select offset_ms, raw_angle_deg, speech_detected from direction_samples "
+            "where segment_id = ? order by offset_ms",
+            (row_id,),
+        ).fetchall()
+        assert samples == [(0, 88.0, 1), (250, 90.0, 1), (500, 92.0, 1)]

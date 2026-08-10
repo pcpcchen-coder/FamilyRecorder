@@ -25,6 +25,8 @@ whisper:
     config = load_config(config_file)
     assert config.audio.device_name_contains == "XMOS"
     assert config.audio.chunk_seconds == 30
+    assert config.direction.enabled is True
+    assert config.direction.sample_interval_seconds == 0.25
     assert config.storage.data_dir == (tmp_path / "family-data").resolve()
     assert config.whisper.binary_path == (tmp_path / "bin/whisper-cli").resolve()
 
@@ -77,4 +79,22 @@ def test_load_config_rejects_duplicate_household_members(tmp_path: Path) -> None
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="duplicate"):
+        load_config(config_file)
+
+
+def test_load_config_accepts_direction_calibration(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "direction:\n  enabled: true\n  front_angle_degrees: 183.5\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_file)
+    assert config.direction.enabled is True
+    assert config.direction.front_angle_degrees == 183.5
+
+
+def test_load_config_rejects_invalid_direction_interval(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("direction:\n  sample_interval_seconds: 0.01\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="sample_interval_seconds"):
         load_config(config_file)

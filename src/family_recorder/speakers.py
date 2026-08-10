@@ -307,7 +307,12 @@ def identify_speaker(
 ) -> SpeakerIdentification:
     if not config.enabled or not profiles:
         return SpeakerIdentification(None, None, "disabled", 0)
-    vectors = feature_vectors(pcm16_mono, sample_rate)
+    duration_seconds = len(pcm16_mono) / 2 / sample_rate
+    vectors = feature_vectors(
+        pcm16_mono,
+        sample_rate,
+        include_whole_sample=duration_seconds < WINDOW_SECONDS,
+    )
     if not vectors:
         return SpeakerIdentification(None, None, "uncertain", 0)
 
