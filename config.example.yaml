@@ -43,7 +43,10 @@ speakers:
   min_margin: 0.025
   dominance_threshold: 0.65
 
-# XVF3800 direction-of-arrival telemetry is read separately from its UAC audio.
+# XVF3800 direction-of-arrival and four-beam Speech Energy telemetry are read
+# separately from its UAC audio, but saved with the same capture timestamp.
+# Speech Energy can rescue a quiet chunk missed by software VAD; the RMS floor
+# prevents a hardware-only non-zero sample from retaining extremely faint noise.
 # Use the menu-bar calibration while one person speaks from the room's chosen
 # front. Angles saved in transcripts are then relative to that position.
 direction:
@@ -53,6 +56,10 @@ direction:
   min_speech_samples: 3
   cluster_tolerance_degrees: 35.0
   multiple_direction_min_ratio: 0.25
+  speech_energy_enabled: true
+  speech_energy_min_ratio: 0.08
+  speech_energy_min_rms_dbfs: -55.0
+  speech_energy_threshold: 0.0
   usb_timeout_ms: 1000
 
 # Google Calendar is the default and currently supported calendar provider.

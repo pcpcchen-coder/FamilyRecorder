@@ -17,7 +17,7 @@ from family_recorder.config import DEFAULT_SUMMARY_PROMPT, AppConfig, load_confi
 from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
-from family_recorder.direction import XVF3800USBReader, capture_direction
+from family_recorder.direction import OutputRoute, XVF3800USBReader, capture_direction
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
@@ -105,6 +105,11 @@ def _parser() -> argparse.ArgumentParser:
         "probe-direction", help="Sample and display XVF3800 direction telemetry"
     )
     probe_direction.add_argument("--seconds", type=float, default=2.0)
+    beamforming = commands.add_parser(
+        "diagnose-beamforming",
+        help="Verify that the captured UAC channel is beamformed/processed",
+    )
+    beamforming.add_argument("--json", action="store_true", dest="as_json")
 
     calendar_enabled = commands.add_parser(
         "set-calendar-enabled", help="Enable or pause Google Calendar candidate extraction"
@@ -174,10 +179,26 @@ def _doctor(config: AppConfig) -> int:
         try:
             reader = XVF3800USBReader(timeout_ms=config.direction.usb_timeout_ms)
             angle, speech = reader.read()
+            energy = reader.read_speech_energy()
+            left, right = reader.read_output_routes()
             print(
                 f"[OK] XVF3800 direction telemetry: raw {angle:.0f} degrees, "
                 f"speech={'yes' if speech else 'no'}"
             )
+            print("[OK] XVF3800 speech energy: " + ", ".join(f"{value:.1f}" for value in energy))
+            print(
+                f"[{'OK' if left.beamformed else 'WARN'}] UAC left routing: "
+                f"({left.category}, {left.source}) {left.description}"
+            )
+            print(f"[OK] UAC right routing: ({right.category}, {right.source}) {right.description}")
+            if config.audio.channels != 1:
+                print(
+                    "[WARN] audio.channels is not 1; stereo downmix cannot verify "
+                    "the processed left channel"
+                )
+                failed = True
+            elif not left.beamformed:
+                failed = True
         except Exception as exc:
             print(f"[MISSING] XVF3800 direction telemetry: {exc}")
             failed = True
@@ -195,6 +216,70 @@ def _doctor(config: AppConfig) -> int:
             print(f"[MISSING] ChatGPT login: {exc}")
             failed = True
     return int(failed)
+
+
+def _route_dict(route: OutputRoute) -> dict[str, object]:
+    return {
+        "channel": route.channel,
+        "category": route.category,
+        "source": route.source,
+        "description": route.description,
+        "beamformed": route.beamformed,
+        "asr_or_aec_residual": route.asr_or_aec_residual,
+    }
+
+
+def _beamforming_diagnostic(config: AppConfig) -> dict[str, object]:
+    device = select_input_device(config.audio)
+    reader = XVF3800USBReader(timeout_ms=config.direction.usb_timeout_ms)
+    try:
+        left, right = reader.read_output_routes()
+    finally:
+        reader.close()
+    captured_channels = min(config.audio.channels, device.input_channels)
+    if captured_channels == 1:
+        verified = left.beamformed
+        capture_mode = "left"
+        verdict = (
+            "verified_beamformed_processed" if verified else "unexpected_non_beamformed_left_route"
+        )
+    else:
+        verified = False
+        capture_mode = "downmix_left_and_right"
+        verdict = "ambiguous_stereo_downmix"
+    return {
+        "device": {
+            "index": device.index,
+            "name": device.name,
+            "input_channels": device.input_channels,
+            "sample_rate": device.default_sample_rate,
+        },
+        "configured_channels": config.audio.channels,
+        "captured_channels": captured_channels,
+        "capture_mode": capture_mode,
+        "routes": {"left": _route_dict(left), "right": _route_dict(right)},
+        "verified": verified,
+        "verdict": verdict,
+    }
+
+
+def _print_beamforming_diagnostic(report: dict[str, object]) -> None:
+    device = report["device"]
+    routes = report["routes"]
+    assert isinstance(device, dict)
+    assert isinstance(routes, dict)
+    left = routes["left"]
+    right = routes["right"]
+    assert isinstance(left, dict)
+    assert isinstance(right, dict)
+    print(f"Audio device: [{device['index']}] {device['name']}")
+    print(f"Left route: ({left['category']}, {left['source']}) {left['description']}")
+    print(f"Right route: ({right['category']}, {right['source']}) {right['description']}")
+    print(f"Capture mode: {report['capture_mode']}")
+    if report["verified"]:
+        print("[OK] FamilyRecorder is capturing the beamformed/processed left UAC channel.")
+    else:
+        print(f"[WARN] Beamformed capture is not verified: {report['verdict']}")
 
 
 def _listener_is_running() -> bool:
@@ -306,6 +391,13 @@ def main(argv: list[str] | None = None) -> int:
             state = resume_recording(config.storage.data_dir)
             print(state.label)
             return 0
+        if args.command == "diagnose-beamforming":
+            report = _beamforming_diagnostic(config)
+            if args.as_json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                _print_beamforming_diagnostic(report)
+            return 0 if report["verified"] else 1
         if args.command == "set-whisper-model":
             model_path = args.path.expanduser().resolve()
             if not model_path.is_file():

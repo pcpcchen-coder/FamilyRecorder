@@ -16,6 +16,11 @@ XVF3800_PRODUCT_ID = 0x001A
 USB_VENDOR_DEVICE_IN = 0xC0
 DOA_RESOURCE_ID = 20
 DOA_COMMAND_ID = 18
+AEC_RESOURCE_ID = 33
+SPEECH_ENERGY_COMMAND_ID = 80
+AUDIO_MANAGER_RESOURCE_ID = 35
+AUDIO_MANAGER_LEFT_COMMAND_ID = 15
+AUDIO_MANAGER_RIGHT_COMMAND_ID = 19
 CONTROL_SUCCESS = 0
 CONTROL_RETRY = 64
 
@@ -29,6 +34,55 @@ class DirectionSample:
     offset_ms: int
     raw_angle_degrees: float
     speech_detected: bool
+
+
+@dataclass(frozen=True)
+class SpeechEnergySample:
+    offset_ms: int
+    focused_beam_1: float
+    focused_beam_2: float
+    free_running_beam: float
+    auto_selected_beam: float
+
+
+@dataclass(frozen=True)
+class SpeechEnergySummary:
+    status: str
+    speech_sample_count: int
+    total_sample_count: int
+    speech_ratio: float
+    peak_auto_selected: float | None
+    mean_auto_selected: float | None
+    samples: tuple[SpeechEnergySample, ...]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class AcousticSample:
+    offset_ms: int
+    raw_angle_degrees: float | None
+    speech_detected: bool | None
+    focused_beam_1: float | None
+    focused_beam_2: float | None
+    free_running_beam: float | None
+    auto_selected_beam: float | None
+
+
+@dataclass(frozen=True)
+class AcousticCapture:
+    direction: DirectionSummary
+    speech_energy: SpeechEnergySummary
+    samples: tuple[AcousticSample, ...]
+
+
+@dataclass(frozen=True)
+class OutputRoute:
+    channel: str
+    category: int
+    source: int
+    description: str
+    beamformed: bool
+    asr_or_aec_residual: bool
 
 
 @dataclass(frozen=True)
@@ -57,6 +111,8 @@ class DirectionSummary:
 
 class DirectionReader(Protocol):
     def read(self) -> tuple[float, bool]: ...
+
+    def read_speech_energy(self) -> tuple[float, float, float, float]: ...
 
     def close(self) -> None: ...
 
@@ -96,15 +152,15 @@ class XVF3800USBReader:
         angle, speech = struct.unpack("<2H", response[1:])
         return float(angle % 360), bool(speech)
 
-    def read(self) -> tuple[float, bool]:
+    def _read_control(self, resource_id: int, command_id: int, response_length: int) -> bytes:
         response: bytes | None = None
         for attempt in range(4):
             raw = self._device.ctrl_transfer(
                 USB_VENDOR_DEVICE_IN,
                 0,
-                0x80 | DOA_COMMAND_ID,
-                DOA_RESOURCE_ID,
-                5,
+                0x80 | command_id,
+                resource_id,
+                response_length,
                 self._timeout_ms,
             )
             response = bytes(raw)
@@ -113,8 +169,85 @@ class XVF3800USBReader:
                 continue
             break
         if response is None:
-            raise DirectionError("XVF3800 沒有回傳 DOA 資料")
+            raise DirectionError("XVF3800 沒有回傳控制資料")
+        return response
+
+    def read(self) -> tuple[float, bool]:
+        response = self._read_control(DOA_RESOURCE_ID, DOA_COMMAND_ID, 5)
         return self.decode_response(response)
+
+    @staticmethod
+    def decode_speech_energy_response(
+        response: bytes,
+    ) -> tuple[float, float, float, float]:
+        if len(response) != 17:
+            raise DirectionError(f"XVF3800 speech-energy 回應長度不正確：{len(response)}")
+        status = response[0]
+        if status != CONTROL_SUCCESS:
+            raise DirectionError(f"XVF3800 speech-energy 回應狀態異常：{status}")
+        return struct.unpack("<4f", response[1:])
+
+    def read_speech_energy(self) -> tuple[float, float, float, float]:
+        response = self._read_control(AEC_RESOURCE_ID, SPEECH_ENERGY_COMMAND_ID, 17)
+        return self.decode_speech_energy_response(response)
+
+    @staticmethod
+    def decode_route_response(response: bytes, channel: str) -> OutputRoute:
+        if len(response) != 3:
+            raise DirectionError(f"XVF3800 {channel} routing 回應長度不正確：{len(response)}")
+        status, category, source = response
+        if status != CONTROL_SUCCESS:
+            raise DirectionError(f"XVF3800 {channel} routing 回應狀態異常：{status}")
+        if category == 6:
+            source_names = {
+                0: "slow focused beam 1",
+                1: "slow focused beam 2",
+                2: "fast/free-running beam",
+                3: "auto-selected best beam",
+            }
+            description = f"processed beamformed: {source_names.get(source, f'source {source}')}"
+        elif category == 7:
+            description = f"AEC residual / ASR beam {source}"
+        elif category == 8:
+            description = (
+                "user-chosen channel copying processed auto-selected beam"
+                if source in {0, 1}
+                else f"user-chosen channel source {source}"
+            )
+        elif category in {1, 2, 3, 11}:
+            description = f"raw/intermediate microphone category {category}, source {source}"
+        elif category == 0:
+            description = "silence"
+        else:
+            description = f"audio mux category {category}, source {source}"
+        return OutputRoute(
+            channel=channel,
+            category=category,
+            source=source,
+            description=description,
+            beamformed=(category == 6 and source in range(4))
+            or (category == 8 and source in {0, 1}),
+            asr_or_aec_residual=category == 7 and source in range(4),
+        )
+
+    def read_output_routes(self) -> tuple[OutputRoute, OutputRoute]:
+        left = self.decode_route_response(
+            self._read_control(
+                AUDIO_MANAGER_RESOURCE_ID,
+                AUDIO_MANAGER_LEFT_COMMAND_ID,
+                3,
+            ),
+            "left",
+        )
+        right = self.decode_route_response(
+            self._read_control(
+                AUDIO_MANAGER_RESOURCE_ID,
+                AUDIO_MANAGER_RIGHT_COMMAND_ID,
+                3,
+            ),
+            "right",
+        )
+        return left, right
 
     def close(self) -> None:
         self._usb_util.dispose_resources(self._device)
@@ -289,6 +422,36 @@ def direction_for_interval(
     return summarize_direction(selected, config, error=summary.error)
 
 
+def summarize_speech_energy(
+    samples: list[SpeechEnergySample] | tuple[SpeechEnergySample, ...],
+    config: DirectionConfig,
+    *,
+    error: str | None = None,
+) -> SpeechEnergySummary:
+    sample_tuple = tuple(samples)
+    if not config.enabled or not config.speech_energy_enabled:
+        return SpeechEnergySummary("disabled", 0, 0, 0.0, None, None, (), error)
+    if not sample_tuple:
+        return SpeechEnergySummary("unavailable", 0, 0, 0.0, None, None, (), error)
+    speech_values = [
+        sample.auto_selected_beam
+        for sample in sample_tuple
+        if sample.auto_selected_beam > config.speech_energy_threshold
+    ]
+    count = len(speech_values)
+    total = len(sample_tuple)
+    return SpeechEnergySummary(
+        "speech" if count else "silence",
+        count,
+        total,
+        count / total,
+        max(speech_values) if speech_values else 0.0,
+        sum(speech_values) / count if speech_values else 0.0,
+        sample_tuple,
+        error,
+    )
+
+
 ReaderFactory = Callable[[], DirectionReader]
 
 
@@ -307,7 +470,11 @@ class DirectionSampler:
         self._thread: threading.Thread | None = None
         self._started_at = 0.0
         self._samples: list[DirectionSample] = []
-        self._error: str | None = None
+        self._speech_energy_samples: list[SpeechEnergySample] = []
+        self._acoustic_samples: list[AcousticSample] = []
+        self._direction_error: str | None = None
+        self._speech_energy_error: str | None = None
+        self._capture: AcousticCapture | None = None
 
     def start(self) -> None:
         if not self.config.enabled or self._thread is not None:
@@ -325,27 +492,67 @@ class DirectionSampler:
         try:
             reader = self.reader_factory()
             while not self._stop.is_set():
-                angle, speech = reader.read()
-                self._samples.append(
-                    DirectionSample(
-                        round((time.monotonic() - self._started_at) * 1_000),
-                        normalize_angle(angle),
-                        speech,
+                offset_ms = round((time.monotonic() - self._started_at) * 1_000)
+                angle: float | None = None
+                speech: bool | None = None
+                energy: tuple[float, float, float, float] | None = None
+                try:
+                    angle, speech = reader.read()
+                    angle = normalize_angle(angle)
+                    self._samples.append(DirectionSample(offset_ms, angle, speech))
+                except Exception as exc:
+                    self._direction_error = str(exc)[-500:]
+                if self.config.speech_energy_enabled:
+                    try:
+                        energy = reader.read_speech_energy()
+                        self._speech_energy_samples.append(SpeechEnergySample(offset_ms, *energy))
+                    except Exception as exc:
+                        self._speech_energy_error = str(exc)[-500:]
+                if angle is not None or energy is not None:
+                    self._acoustic_samples.append(
+                        AcousticSample(
+                            offset_ms,
+                            angle,
+                            speech,
+                            energy[0] if energy else None,
+                            energy[1] if energy else None,
+                            energy[2] if energy else None,
+                            energy[3] if energy else None,
+                        )
                     )
-                )
                 self._stop.wait(self.config.sample_interval_seconds)
         except Exception as exc:
-            self._error = str(exc)[-500:]
+            error = str(exc)[-500:]
+            self._direction_error = error
+            self._speech_energy_error = error
         finally:
             if reader is not None:
                 with suppress(Exception):
                     reader.close()
 
-    def stop(self) -> DirectionSummary:
+    def stop_acoustic(self) -> AcousticCapture:
+        if self._capture is not None:
+            return self._capture
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=max(2.0, self.config.usb_timeout_ms / 1_000 + 1.0))
-        return summarize_direction(self._samples, self.config, error=self._error)
+        self._capture = AcousticCapture(
+            summarize_direction(
+                self._samples,
+                self.config,
+                error=self._direction_error,
+            ),
+            summarize_speech_energy(
+                self._speech_energy_samples,
+                self.config,
+                error=self._speech_energy_error,
+            ),
+            tuple(self._acoustic_samples),
+        )
+        return self._capture
+
+    def stop(self) -> DirectionSummary:
+        return self.stop_acoustic().direction
 
 
 def capture_direction(

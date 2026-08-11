@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
@@ -16,7 +17,12 @@ from family_recorder.audio import (
 )
 from family_recorder.config import AppConfig
 from family_recorder.control import ControlStateError, read_pause_state
-from family_recorder.direction import DirectionSampler, DirectionSummary, direction_for_interval
+from family_recorder.direction import (
+    DirectionSampler,
+    DirectionSummary,
+    SpeechEnergySummary,
+    direction_for_interval,
+)
 from family_recorder.metrics import AudioAnalysis, analyze_audio
 from family_recorder.speakers import (
     SpeakerIdentification,
@@ -28,6 +34,35 @@ from family_recorder.storage import Storage
 from family_recorder.transcriber import WhisperCppTranscriber
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CaptureGateDecision:
+    keep: bool
+    reason: str
+    software_keep: bool
+    speech_energy_keep: bool
+
+
+def decide_capture_gate(
+    analysis: AudioAnalysis,
+    speech_energy: SpeechEnergySummary,
+    config: AppConfig,
+) -> CaptureGateDecision:
+    energy_keep = (
+        config.direction.enabled
+        and config.direction.speech_energy_enabled
+        and speech_energy.status == "speech"
+        and speech_energy.speech_ratio >= config.direction.speech_energy_min_ratio
+        and analysis.rms_dbfs >= config.direction.speech_energy_min_rms_dbfs
+    )
+    if analysis.keep:
+        return CaptureGateDecision(True, "software_vad", True, energy_keep)
+    if energy_keep:
+        return CaptureGateDecision(True, "xvf3800_speech_energy", False, True)
+    if speech_energy.status == "unavailable":
+        return CaptureGateDecision(False, "software_vad; speech_energy_unavailable", False, False)
+    return CaptureGateDecision(False, "silence", False, False)
 
 
 def _format_optional(value: float | None) -> str:
@@ -49,6 +84,7 @@ def _transcribe_segment(
     audio_path: Path,
     analysis: AudioAnalysis,
     direction: DirectionSummary,
+    capture_id: int | None,
     *,
     raise_errors: bool,
 ) -> None:
@@ -110,6 +146,7 @@ def _transcribe_segment(
                             transcript_segment.text,
                             speaker=speaker,
                             direction=segment_direction,
+                            capture_id=capture_id,
                         )
                         if speaker and speaker.status == "recognized":
                             LOGGER.info(
@@ -131,6 +168,7 @@ def _transcribe_segment(
                         "",
                         status="empty",
                         direction=direction,
+                        capture_id=capture_id,
                     )
                     LOGGER.info("Whisper returned no text")
                 if config.storage.delete_audio_after_transcription:
@@ -144,6 +182,7 @@ def _transcribe_segment(
                     status="failed",
                     error=str(exc)[-2_000:],
                     direction=direction,
+                    capture_id=capture_id,
                 )
                 LOGGER.exception("Transcription failed; audio retained at %s", audio_path)
                 if raise_errors:
@@ -177,6 +216,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
         processed = 0
         pause_was_logged = False
         direction_error_was_logged = False
+        speech_energy_error_was_logged = False
         while True:
             try:
                 pause_state = read_pause_state(config.storage.data_dir)
@@ -214,13 +254,16 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                                     stop_requested=lambda: _pause_requested(config),
                                 )
                             finally:
-                                direction = direction_sampler.stop()
+                                acoustic = direction_sampler.stop_acoustic()
                         except CaptureInterrupted:
                             LOGGER.info("Pause activated; discarded the in-progress chunk")
                             pause_was_logged = True
                             break
                         processed += 1
+                        direction = acoustic.direction
+                        speech_energy = acoustic.speech_energy
                         analysis = analyze_audio(chunk.pcm16_mono, chunk.sample_rate, config.vad)
+                        gate = decide_capture_gate(analysis, speech_energy, config)
                         LOGGER.info(
                             "Chunk %s rms=%.1f dBFS speech=%.1f%% snr=%s dB overflow=%s",
                             chunk.started_at.isoformat(timespec="seconds"),
@@ -250,13 +293,43 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                         elif direction.status == "unavailable" and not direction_error_was_logged:
                             LOGGER.warning("Direction telemetry unavailable: %s", direction.error)
                             direction_error_was_logged = True
-                        if not analysis.keep:
-                            LOGGER.info("Chunk skipped by silence/VAD gate")
+                        if speech_energy.status in {"speech", "silence"}:
+                            LOGGER.info(
+                                "XVF3800 speech energy: speech=%.1f%% auto peak=%.1f "
+                                "auto mean=%.1f",
+                                speech_energy.speech_ratio * 100,
+                                speech_energy.peak_auto_selected or 0,
+                                speech_energy.mean_auto_selected or 0,
+                            )
+                            speech_energy_error_was_logged = False
+                        elif (
+                            speech_energy.status == "unavailable"
+                            and not speech_energy_error_was_logged
+                        ):
+                            LOGGER.warning(
+                                "XVF3800 speech-energy telemetry unavailable: %s",
+                                speech_energy.error,
+                            )
+                            speech_energy_error_was_logged = True
+
+                        audio_path = storage.audio_path_for(chunk.started_at) if gate.keep else None
+                        capture_id = storage.save_capture(
+                            chunk,
+                            analysis,
+                            acoustic,
+                            combined_keep=gate.keep,
+                            gate_reason=gate.reason,
+                            audio_path=audio_path,
+                        )
+                        if not gate.keep:
+                            LOGGER.info("Chunk skipped by combined silence/VAD gate")
                             if once:
                                 return
                             continue
 
-                        audio_path = storage.audio_path_for(chunk.started_at)
+                        assert audio_path is not None
+                        if gate.reason == "xvf3800_speech_energy":
+                            LOGGER.info("Chunk retained by XVF3800 speech-energy evidence")
                         write_wav(audio_path, chunk.pcm16_mono, chunk.sample_rate)
                         # The worker receives only timing metadata, not the PCM
                         # payload, so a temporary transcription slowdown cannot
@@ -276,6 +349,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             audio_path,
                             analysis,
                             direction,
+                            capture_id,
                             raise_errors=once,
                         )
 

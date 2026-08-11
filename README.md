@@ -4,8 +4,8 @@
 
 ```text
 XVF3800 / XMOS
-        ├── UAC2 音訊 ──► 30 秒 PCM ──► VAD ──► whisper.cpp 時間片段
-        └── USB 控制 ──► 每 0.25 秒 DoA／語音旗標 ───┐
+        ├── UAC 左聲道 beamformed/processed ──► 30 秒 PCM ──► VAD ──► whisper.cpp
+        └── USB 控制 ──► 每 0.25 秒 DoA＋四束 Speech Energy ─┐
                     本機家庭人聲近似比對 ────────────┤
                                                      │ 每小段對齊時間＋音色＋方向
                                 ┌────────────────────┴─────────────┐
@@ -29,9 +29,9 @@ XVF3800 / XMOS
 
 - 列出所有 macOS 輸入裝置，自動優先選擇名稱含 `XVF3800`、`XMOS`、`microphone array`、`USB` 的 UAC 裝置；預設不會悄悄改用 Mac 內建麥克風。
 - 連續讀取 30 秒 chunk。XVF3800 韌體若固定為 48 kHz，會先按裝置預設取樣率擷取，再於本機轉成 Whisper/VAD 使用的 16 kHz 單聲道 PCM16。
-- RMS silence gate 與 WebRTC VAD 雙重過濾，安靜片段不落地、不進 Whisper。
+- RMS silence gate、WebRTC VAD 與 XVF3800 auto-selected beam Speech Energy 融合；安靜片段不落 WAV、不進 Whisper，但本機仍保留低容量遙測供重新分析。
 - 呼叫本機 `whisper.cpp`，預設 `zh`、`large-v3-turbo`、8 threads；Apple Silicon 安裝時開啟 Metal。
-- 每日 Markdown 逐字稿，以及含時間、音量、SNR、speech ratio、WAV 路徑與狀態的 SQLite 索引。
+- 每日 Markdown 逐字稿，以及含時間、音量、SNR、software／hardware speech ratio、WAV 路徑、DoA 與四束 speech-energy time series 的 SQLite 索引。
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；摘要會按原始片段時間與本機近似人別建立事件時間軸及家庭成員重點，過長逐字稿則依完整段落切分後再保留時間、人別並去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
@@ -40,11 +40,13 @@ XVF3800 / XMOS
 - 內建原生一鍵解除安裝：可只移除程式與模型並保留家庭資料，或把程式、模型、錄音、逐字稿、資料庫、人聲樣本與設定完整移到垃圾桶。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - 透過 XVF3800 獨立 USB 控制介面同步讀取 DoA（Direction of Arrival）；將 Whisper 的數秒級時間片段分別配對音色人別與方向，逐字稿及每日摘要同時保留兩種線索。
+- 內建唯讀 `diagnose-beamforming`：讀取實際 `AUDIO_MGR_OP_L/R` routing，確認 FamilyRecorder 的單聲道 capture 是 processed auto-selected beam，而不是 raw microphone 或混合錯誤聲道。
+- 同步讀取 focused beam 1、focused beam 2、free-running beam、auto-selected beam 四組 Speech Energy；與 software VAD 共同決定是否轉錄，原始值及共同毫秒 offset 全留在本機 SQLite。
 - 選單列可開關方向判斷、測試目前方向，並讓使用者站在指定位置說話，把該方向一鍵校準為房間的 `0° 正前方`。
 - Google Calendar 為預設行事曆 provider：每位家庭成員可綁定多個日曆並指定預設；可選擇逐筆確認，或一次同意後讓每次摘要自動加入。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
-XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角不是 WAV 內的額外聲道，而是另外讀取 `DOA_VALUE`／波束控制資料；Seeed 官方工具也把 Auto selected beam 定義為 LED 指示所用的方向。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
+XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角與 Speech Energy 不是 WAV 內的額外聲道，而是另外讀取 USB control command。Seeed 官方 routing 定義中，category `6` 是 processed beamformed、source `3` 是 auto-selected best beam；category `8` 的 source `0/1` 目前複製這個輸出。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 音訊處理管線](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/datasheet/03_audio_pipeline.html)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
 
 ## 系統需求
 
@@ -153,6 +155,14 @@ audio:
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" doctor
 ```
 
+再用唯讀診斷確認目前韌體 routing 與 FamilyRecorder capture channel：
+
+```bash
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" diagnose-beamforming
+```
+
+標準輸出應顯示左聲道 `(8, 0)` user-chosen/processed auto-selected beam（或 `(6, 3)` processed auto-selected beam），最後一行為 `[OK] FamilyRecorder is capturing the beamformed/processed left UAC channel.`。右聲道通常是 `(7, 3)` ASR/AEC residual；FamilyRecorder 預設 `audio.channels: 1`，因此只取第一個／左聲道，不把兩種不同處理目的的聲道平均混合。診斷器不會改寫 XVF3800 routing。
+
 到「系統設定 → 隱私權與安全性 → 麥克風」允許 `FamilyRecorder`，再透過原生 App 身分跑一個 30 秒 chunk。開始後持續說話，避免被 VAD 判成安靜：
 
 ```bash
@@ -168,9 +178,11 @@ audio:
 cat "$HOME/xvf3800-listener-data/transcripts/$(date +%F).md"
 sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
   'select started_at, status, round(rms_dbfs,1), round(speech_ratio,2), text from segments order by id desc limit 5;'
+sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
+  'select started_at, software_speech_ratio, hardware_speech_ratio, gate_reason from captures order by id desc limit 5;'
 ```
 
-若 `--once` 顯示 `Chunk skipped by silence/VAD gate`，代表整段未達門檻；這是正常的 privacy／storage 行為。測試時可暫時把 `vad.min_speech_ratio` 改成 `0.02`、`vad.min_rms_dbfs` 改成 `-55`，驗收後再改回範例值。
+若 `--once` 顯示 `Chunk skipped by combined silence/VAD gate`，代表 software VAD 與硬體 Speech Energy 的融合結果都未達門檻；這是正常的 privacy／storage 行為。即使沒有 WAV，低容量 `captures`／`acoustic_samples` 遙測仍會留下，以便檢查為什麼被略過。測試時可暫時把 `vad.min_speech_ratio` 改成 `0.02`、`vad.min_rms_dbfs` 改成 `-55`，驗收後再改回範例值。
 
 ## 設定
 
@@ -198,6 +210,10 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `direction.min_speech_samples` | `3` | 一個文字時間片段至少需要幾個帶語音旗標的方向樣本 |
 | `direction.cluster_tolerance_degrees` | `35` | 相近方向合併容許角度 |
 | `direction.multiple_direction_min_ratio` | `0.25` | 第二方向至少佔多少語音樣本才標示多方向 |
+| `direction.speech_energy_enabled` | `true` | 讀取四束 Speech Energy，並與 software VAD 融合 |
+| `direction.speech_energy_min_ratio` | `0.08` | auto-selected beam 在一個 chunk 中非零樣本的最低比例 |
+| `direction.speech_energy_min_rms_dbfs` | `-55` | 只有硬體判為語音時仍須達到的本機 RMS 安全下限 |
+| `direction.speech_energy_threshold` | `0` | 大於此值視為硬體語音；官方定義預設為非零即可能有語音 |
 | `calendar.provider` | `google` | 預設且目前支援的行事曆 provider |
 | `calendar.enabled` | `false` | 選定預設 Google Calendar 後由選單自動開啟候選事件 |
 | `calendar.auto_create` | `false` | 一次同意後，讓選單列程式自動把摘要候選寫入日曆；可隨時關閉 |
@@ -417,7 +433,11 @@ Whisper 完成一個 30 秒 chunk 後，系統會使用其 JSON 時間戳拆成�
 
 ## 聲音方向＋音色人別
 
-XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vendor control 介面另行讀取。FamilyRecorder 在每個 30 秒錄音期間預設每 0.25 秒保存一次原始角度與 `speech_detected`，再按 Whisper 文字片段的起訖毫秒篩選同時間樣本。相近角度會做環狀分群，因此 `358°` 與 `2°` 會視為同方向；若第二個相隔明顯的方向達到設定比例，該片段標成「方向：多個」。
+XVF3800 的 UAC 左右聲道可由韌體 audio mux 指向不同來源。FamilyRecorder 預設只擷取第一個／左聲道；`diagnose-beamforming` 會讀回實際 routing，只有 category `6` 的 processed beamformed source 或 category `8` 的 auto-selected beam copy 才判定通過。`audio.channels` 若設為 `2`，舊版的 stereo downmix 會混合左右輸出，診斷器因此標示 `ambiguous_stereo_downmix`，不宣稱已驗證 processed channel。
+
+DoA 與 Speech Energy 由同一台裝置的 USB vendor control 介面另行讀取。FamilyRecorder 在每個 30 秒錄音期間預設每 0.25 秒建立一列共同 offset，包含原始角度、`speech_detected`、focused beam 1/2、free-running beam 與 auto-selected beam 能量。相近角度會做環狀分群，因此 `358°` 與 `2°` 會視為同方向；若第二個相隔明顯的方向達到設定比例，該片段標成「方向：多個」。
+
+Speech Energy 的 auto-selected beam 非零比例可在 WebRTC VAD 漏掉較輕聲語音時保留 chunk；仍必須通過 `speech_energy_min_rms_dbfs`，避免極低音量雜訊只因單一硬體非零值就進入 Whisper。Software VAD 通過的 chunk 不會被硬體遙測否決；USB control 暫時讀不到時也會退回原本 software VAD，錄音主流程不會中斷。
 
 第一次使用建議校準房間方向：
 
@@ -431,6 +451,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 ```bash
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" probe-direction --seconds 2
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" calibrate-direction --seconds 4
+"$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" diagnose-beamforming --json
 ```
 
 方向與音色的結合方式是「同一時間片段並列兩項獨立證據」，不是用座位直接綁定姓名。例如：
@@ -441,7 +462,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 明天記得去拿包裹。
 ```
 
-若爸爸移到別的位置，姓名仍由音色近似判斷，方向跟著新的聲源位置改變。兩人坐在相同方位時方向無法分辨兩人；兩個明顯方向或音色判斷衝突時，摘要會保守標示需人工確認。原始 DoA 取樣與聲音特徵只留在本機 SQLite；雲端每日摘要只會收到逐字稿標題中的文字化方向，不會收到音訊、聲音特徵或逐筆 USB 遙測。
+若爸爸移到別的位置，姓名仍由音色近似判斷，方向跟著新的聲源位置改變。兩人坐在相同方位時方向無法分辨兩人；兩個明顯方向或音色判斷衝突時，摘要會保守標示需人工確認。原始 DoA、Speech Energy 與聲音特徵只留在本機 SQLite；雲端每日摘要只會收到逐字稿標題中的文字化方向，不會收到音訊、聲音特徵或逐筆 USB 遙測。
 
 ## Mic placement test
 
@@ -498,6 +519,10 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 
 方向摘要欄位為 `direction_raw_angle_deg`、校準後的 `direction_angle_deg`、`direction_label`、`direction_confidence`（主要方向的樣本占比）、`direction_status`、`direction_spread_deg` 與樣本數；`direction_status` 可能為 `detected`、`multiple`、`uncertain`、`unavailable` 或 `disabled`。`direction_samples` 表另外保存每個文字片段內的毫秒 offset、原始角度及語音旗標，並以 `segment_id` 連回 `segments`。
 
+每一個完成擷取的 30 秒 chunk 都會先寫入 `captures`，包括被融合 gate 判為安靜、沒有建立 WAV 的 chunk。這個表保存 `software_speech_ratio`、`software_keep`、`hardware_speech_ratio`、`combined_keep` 與 `gate_reason`；成功進入 Whisper 的 `segments.capture_id` 會連回來源 capture。
+
+`acoustic_samples` 是可重新分析的低容量 time series：每列以 `capture_id + offset_ms` 對齊同一時刻的 `raw_angle_deg`、`speech_detected`、`focused_beam_1`、`focused_beam_2`、`free_running_beam` 與 `auto_selected_beam`。它不受 WAV retention 影響，也不會送往 ChatGPT。30 秒、每 0.25 秒一次時約 120 列；某一個 USB command 暫時失敗時，該列對應欄位為 `NULL`，其他成功遙測仍保留。
+
 `summaries` 表以 `summary_date` 為主鍵，另存摘要檔路徑、實際選用的模型標記與建立時間。重新整理同一天時會更新該列。Markdown 摘要中的事件時間仍以逐字稿標題為準，SQLite 的 `created_at` 只是摘要產生時間。
 
 手動執行 retention：
@@ -524,7 +549,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 
 產物為 `dist/FamilyRecorder-<版本>-arm64.dmg` 與對應的 `.sha256`。若要公開散布且不顯示 Gatekeeper 未公證警告，發行者還需使用 Developer ID Application 憑證簽署並送 Apple notarization；一般 Apple Development 憑證不等同公開發行公證。
 
-硬體不在 CI 測試範圍；裝置選擇、雙聲道 downmix／取樣率轉換、VAD 指標、Whisper CLI 介面、SQLite migration／Markdown、人聲特徵儲存與近似分類、retention、純文字摘要與 CER 報告都有隔離測試。
+CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamformed/raw 判定、四束 float32 Speech Energy、software/hardware VAD 融合、共同 time series、雙聲道 downmix／取樣率轉換、Whisper CLI、SQLite migration／Markdown、人聲近似分類、retention、純文字摘要與 CER 報告都有隔離測試。發佈前仍應在 XVF3800 實機執行 `diagnose-beamforming`、`doctor` 與語音／靜音採樣。
 
 ## 驗收清單
 
@@ -553,6 +578,9 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 23. 同一 30 秒內從兩個不同方向輪流說話時，Whisper 時間片段各自取得相符方向；同時或快速交疊時保守標示多方向／不確定。
 24. 每日摘要包含「對話方向與人別線索」，重要項目保留來源方向；沒有音色姓名時不會只靠方向指定家人。
 25. Google Calendar 預設未確認前不建立事件；開啟 `auto_create` 必須先通過一次明確同意。成員路由可回退到成員／全家預設，自動與手動建立都更新 SQLite 狀態，重啟重試不會重複加入同一候選。
+26. `diagnose-beamforming` 讀回左、右 `AUDIO_MGR_OP`；預設單聲道設定明確顯示 `[OK]` 且左聲道是 category `6` processed 或 category `8` user-chosen auto-selected beam，不是 raw category。
+27. 實機靜音時 `AEC_SPENERGY_VALUES` 四束接近 0；說話時至少一束與 auto-selected beam 產生非零能量，`doctor` 顯示四值可讀。
+28. SQLite 的 `captures` 對安靜與語音 chunk 都有列；`acoustic_samples` 可用同一 `capture_id + offset_ms` 查到 DoA 與四束能量，硬體能量救回 software VAD miss 時 `gate_reason='xvf3800_speech_energy'`。
 
 ## 常見問題
 
@@ -564,7 +592,9 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 
 **系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 
-**一直被 VAD 略過**：查看 log 的 RMS 與 speech ratio，先以 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。
+**一直被 VAD 略過**：查看 log 的 RMS、software speech ratio、XVF3800 Speech Energy 與 `captures.gate_reason`。先以 software VAD 的 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。若 Speech Energy 永遠是 0，先跑 `doctor` 並對麥克風持續自然說話，不要把系統喇叭回音當成可靠近端測試。
+
+**Beamforming 診斷不是 OK**：先確認 `audio.channels: 1`；`2` 會被判為左右混合、無法驗證。再執行 `diagnose-beamforming --json` 檢查左 routing。category `1/2/3/11` 是 raw/intermediate microphone，不應用於目前 FamilyRecorder；診斷只讀不改設定，如 routing 被其他工具改動，請依 XVF3800 韌體文件恢復 processed auto-selected beam。
 
 **人別常顯示不確定／認錯人**：讓每位成員在相同麥克風位置重新錄製自然語音，避免電視、音樂與多人同時說話。若誤認多，提高 `min_similarity` 或 `min_margin`；若大多不確定，才小幅降低。這項功能不能用於門禁、付款、家長監護或任何需要確認身分的用途。
 

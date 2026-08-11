@@ -66,6 +66,10 @@ class DirectionConfig:
     min_speech_samples: int = 3
     cluster_tolerance_degrees: float = 35.0
     multiple_direction_min_ratio: float = 0.25
+    speech_energy_enabled: bool = True
+    speech_energy_min_ratio: float = 0.08
+    speech_energy_min_rms_dbfs: float = -55.0
+    speech_energy_threshold: float = 0.0
     usb_timeout_ms: int = 1_000
 
 
@@ -282,6 +286,12 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("direction.cluster_tolerance_degrees must be between 5 and 90")
     if not 0.1 <= config.direction.multiple_direction_min_ratio <= 0.5:
         raise ValueError("direction.multiple_direction_min_ratio must be between 0.1 and 0.5")
+    if not 0 <= config.direction.speech_energy_min_ratio <= 1:
+        raise ValueError("direction.speech_energy_min_ratio must be between 0 and 1")
+    if not -120 <= config.direction.speech_energy_min_rms_dbfs <= 0:
+        raise ValueError("direction.speech_energy_min_rms_dbfs must be between -120 and 0")
+    if config.direction.speech_energy_threshold < 0:
+        raise ValueError("direction.speech_energy_threshold cannot be negative")
     if not 100 <= config.direction.usb_timeout_ms <= 10_000:
         raise ValueError("direction.usb_timeout_ms must be between 100 and 10000")
     if config.calendar.provider != "google":

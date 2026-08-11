@@ -1,0 +1,56 @@
+from family_recorder import cli
+from family_recorder.config import AppConfig, AudioConfig
+from family_recorder.devices import AudioDevice
+from family_recorder.direction import OutputRoute
+
+
+class FakeRoutingReader:
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    @staticmethod
+    def read_output_routes() -> tuple[OutputRoute, OutputRoute]:
+        return (
+            OutputRoute(
+                "left",
+                8,
+                0,
+                "user-chosen channel copying processed auto-selected beam",
+                True,
+                False,
+            ),
+            OutputRoute("right", 7, 3, "AEC residual / ASR beam 3", False, True),
+        )
+
+    def close(self) -> None:
+        pass
+
+
+def _patch_hardware(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "select_input_device",
+        lambda _config: AudioDevice(1, "reSpeaker XVF3800 4-Mic Array", 2, 16_000),
+    )
+    monkeypatch.setattr(cli, "XVF3800USBReader", FakeRoutingReader)
+
+
+def test_beamforming_diagnostic_verifies_default_left_channel(monkeypatch) -> None:
+    _patch_hardware(monkeypatch)
+
+    report = cli._beamforming_diagnostic(AppConfig())
+
+    assert report["capture_mode"] == "left"
+    assert report["verified"] is True
+    assert report["verdict"] == "verified_beamformed_processed"
+    assert report["routes"]["left"]["category"] == 8
+
+
+def test_beamforming_diagnostic_rejects_stereo_downmix(monkeypatch) -> None:
+    _patch_hardware(monkeypatch)
+
+    report = cli._beamforming_diagnostic(AppConfig(audio=AudioConfig(channels=2)))
+
+    assert report["capture_mode"] == "downmix_left_and_right"
+    assert report["verified"] is False
+    assert report["verdict"] == "ambiguous_stereo_downmix"

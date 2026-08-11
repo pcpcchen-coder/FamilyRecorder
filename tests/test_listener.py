@@ -7,7 +7,14 @@ from family_recorder.audio import AudioChunk
 from family_recorder.config import AppConfig, DirectionConfig, SpeakerConfig, StorageConfig
 from family_recorder.control import pause_recording
 from family_recorder.devices import AudioDevice
-from family_recorder.direction import DirectionSample, summarize_direction
+from family_recorder.direction import (
+    AcousticCapture,
+    DirectionSample,
+    SpeechEnergySample,
+    summarize_direction,
+    summarize_speech_energy,
+)
+from family_recorder.listener import decide_capture_gate
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.speakers import SpeakerIdentification
 from family_recorder.storage import Storage
@@ -168,8 +175,15 @@ def test_timed_text_segments_align_independent_speaker_and_direction_evidence(
         def start(self) -> None:
             pass
 
-        def stop(self):
-            return direction
+        def stop_acoustic(self):
+            return AcousticCapture(
+                direction,
+                summarize_speech_energy(
+                    [],
+                    DirectionConfig(speech_energy_enabled=False),
+                ),
+                (),
+            )
 
     class FakeProfileStore:
         def __init__(self, _data_dir) -> None:
@@ -214,3 +228,45 @@ def test_timed_text_segments_align_independent_speaker_and_direction_evidence(
         ("第一句。", "爸爸", "左側"),
         ("第二句。", "兒子", "右側"),
     ]
+
+
+def test_xvf3800_speech_energy_can_rescue_a_software_vad_miss() -> None:
+    config = AppConfig(
+        direction=DirectionConfig(
+            speech_energy_min_ratio=0.08,
+            speech_energy_min_rms_dbfs=-55,
+        )
+    )
+    energy = summarize_speech_energy(
+        [
+            SpeechEnergySample(0, 0, 1_000, 2_000, 2_000),
+            SpeechEnergySample(250, 0, 0, 0, 0),
+        ],
+        config.direction,
+    )
+
+    decision = decide_capture_gate(
+        AudioAnalysis(False, -50.0, 5.0, 0.03, 100),
+        energy,
+        config,
+    )
+
+    assert decision.keep is True
+    assert decision.reason == "xvf3800_speech_energy"
+
+
+def test_xvf3800_speech_energy_does_not_rescue_audio_below_rms_floor() -> None:
+    config = AppConfig(direction=DirectionConfig(speech_energy_min_rms_dbfs=-55))
+    energy = summarize_speech_energy(
+        [SpeechEnergySample(0, 0, 1_000, 2_000, 2_000)],
+        config.direction,
+    )
+
+    decision = decide_capture_gate(
+        AudioAnalysis(False, -80.0, None, 0.0, 100),
+        energy,
+        config,
+    )
+
+    assert decision.keep is False
+    assert decision.reason == "silence"

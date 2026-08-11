@@ -8,7 +8,7 @@ from pathlib import Path
 
 from family_recorder.audio import AudioChunk
 from family_recorder.config import StorageConfig
-from family_recorder.direction import DirectionSummary
+from family_recorder.direction import AcousticCapture, DirectionSummary
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.speakers import SpeakerIdentification
 
@@ -18,6 +18,7 @@ PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS segments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    capture_id INTEGER,
     transcript_date TEXT NOT NULL,
     started_at TEXT NOT NULL,
     ended_at TEXT NOT NULL,
@@ -48,6 +49,41 @@ ON segments(transcript_date, started_at);
 
 CREATE INDEX IF NOT EXISTS idx_segments_status
 ON segments(status);
+
+CREATE TABLE IF NOT EXISTS captures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    sample_rate INTEGER NOT NULL,
+    audio_path TEXT,
+    overflowed INTEGER NOT NULL CHECK(overflowed IN (0, 1)),
+    rms_dbfs REAL NOT NULL,
+    snr_db REAL,
+    software_speech_ratio REAL NOT NULL,
+    software_keep INTEGER NOT NULL CHECK(software_keep IN (0, 1)),
+    hardware_speech_ratio REAL,
+    combined_keep INTEGER NOT NULL CHECK(combined_keep IN (0, 1)),
+    gate_reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_captures_started
+ON captures(started_at);
+
+CREATE TABLE IF NOT EXISTS acoustic_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
+    offset_ms INTEGER NOT NULL,
+    raw_angle_deg REAL,
+    speech_detected INTEGER CHECK(speech_detected IN (0, 1)),
+    focused_beam_1 REAL,
+    focused_beam_2 REAL,
+    free_running_beam REAL,
+    auto_selected_beam REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_acoustic_samples_capture_offset
+ON acoustic_samples(capture_id, offset_ms);
 
 CREATE TABLE IF NOT EXISTS direction_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,6 +168,7 @@ class Storage:
             row[1] for row in self.connection.execute("PRAGMA table_info(segments)").fetchall()
         }
         additions = {
+            "capture_id": "INTEGER",
             "speaker_name": "TEXT",
             "speaker_confidence": "REAL",
             "speaker_status": "TEXT",
@@ -170,6 +207,73 @@ class Storage:
     def summary_path_for(self, target_date: date) -> Path:
         return self.summary_dir / f"{target_date.isoformat()}.md"
 
+    def save_capture(
+        self,
+        chunk: AudioChunk,
+        analysis: AudioAnalysis,
+        acoustic: AcousticCapture,
+        *,
+        combined_keep: bool,
+        gate_reason: str,
+        audio_path: Path | None,
+    ) -> int:
+        energy = acoustic.speech_energy
+        hardware_ratio = energy.speech_ratio if energy.status in {"speech", "silence"} else None
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO captures (
+                    started_at, ended_at, sample_rate, audio_path, overflowed,
+                    rms_dbfs, snr_db, software_speech_ratio, software_keep,
+                    hardware_speech_ratio, combined_keep, gate_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chunk.started_at.isoformat(),
+                    chunk.ended_at.isoformat(),
+                    chunk.sample_rate,
+                    str(audio_path) if audio_path is not None else None,
+                    int(chunk.overflowed),
+                    analysis.rms_dbfs,
+                    analysis.snr_db,
+                    analysis.speech_ratio,
+                    int(analysis.keep),
+                    hardware_ratio,
+                    int(combined_keep),
+                    gate_reason,
+                    datetime.now().astimezone().isoformat(),
+                ),
+            )
+            capture_id = int(cursor.lastrowid)
+            if acoustic.samples:
+                self.connection.executemany(
+                    """
+                    INSERT INTO acoustic_samples (
+                        capture_id, offset_ms, raw_angle_deg, speech_detected,
+                        focused_beam_1, focused_beam_2, free_running_beam,
+                        auto_selected_beam
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            capture_id,
+                            sample.offset_ms,
+                            sample.raw_angle_degrees,
+                            (
+                                None
+                                if sample.speech_detected is None
+                                else int(sample.speech_detected)
+                            ),
+                            sample.focused_beam_1,
+                            sample.focused_beam_2,
+                            sample.free_running_beam,
+                            sample.auto_selected_beam,
+                        )
+                        for sample in acoustic.samples
+                    ),
+                )
+        return capture_id
+
     def save_segment(
         self,
         chunk: AudioChunk,
@@ -180,6 +284,7 @@ class Storage:
         error: str | None = None,
         speaker: SpeakerIdentification | None = None,
         direction: DirectionSummary | None = None,
+        capture_id: int | None = None,
     ) -> int:
         if status == "transcribed" and text:
             transcript_path = self.transcript_path_for(chunk.started_at.date())
@@ -244,16 +349,17 @@ class Storage:
             cursor = self.connection.execute(
                 """
                 INSERT INTO segments (
-                    transcript_date, started_at, ended_at, audio_path, text,
+                    capture_id, transcript_date, started_at, ended_at, audio_path, text,
                     rms_dbfs, snr_db, speech_ratio, status, error,
                     speaker_name, speaker_confidence, speaker_status,
                     direction_raw_angle_deg, direction_angle_deg, direction_label,
                     direction_confidence, direction_status, direction_spread_deg,
                     direction_speech_samples, direction_total_samples,
                     direction_clusters_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    capture_id,
                     chunk.started_at.date().isoformat(),
                     chunk.started_at.isoformat(),
                     chunk.ended_at.isoformat(),

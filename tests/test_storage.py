@@ -5,7 +5,14 @@ from pathlib import Path
 
 from family_recorder.audio import AudioChunk, write_wav
 from family_recorder.config import DirectionConfig, StorageConfig
-from family_recorder.direction import DirectionSample, summarize_direction
+from family_recorder.direction import (
+    AcousticCapture,
+    AcousticSample,
+    DirectionSample,
+    SpeechEnergySample,
+    summarize_direction,
+    summarize_speech_energy,
+)
 from family_recorder.metrics import AudioAnalysis
 from family_recorder.speakers import SpeakerIdentification
 from family_recorder.storage import Storage
@@ -100,7 +107,53 @@ def test_existing_database_gets_speaker_columns(tmp_path: Path) -> None:
         "direction_label",
         "direction_status",
         "direction_clusters_json",
+        "capture_id",
     } <= columns
+
+
+def test_capture_stores_speech_energy_time_series_even_when_gate_skips_audio(
+    tmp_path: Path,
+) -> None:
+    started = datetime(2026, 8, 9, 12, 30, tzinfo=UTC)
+    chunk = AudioChunk(b"\0" * 320, 16_000, started, started + timedelta(seconds=1))
+    analysis = AudioAnalysis(False, -70.0, None, 0.0, 33)
+    config = DirectionConfig(min_speech_samples=1)
+    direction = summarize_direction([DirectionSample(0, 90, False)], config)
+    energy_samples = [
+        SpeechEnergySample(0, 0, 0, 0, 0),
+        SpeechEnergySample(250, 100, 200, 300, 300),
+    ]
+    acoustic = AcousticCapture(
+        direction,
+        summarize_speech_energy(energy_samples, config),
+        (
+            AcousticSample(0, 90, False, 0, 0, 0, 0),
+            AcousticSample(250, 91, True, 100, 200, 300, 300),
+        ),
+    )
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        capture_id = storage.save_capture(
+            chunk,
+            analysis,
+            acoustic,
+            combined_keep=False,
+            gate_reason="silence",
+            audio_path=None,
+        )
+        capture = storage.connection.execute(
+            "select audio_path, hardware_speech_ratio, combined_keep, gate_reason "
+            "from captures where id = ?",
+            (capture_id,),
+        ).fetchone()
+        samples = storage.connection.execute(
+            "select offset_ms, raw_angle_deg, auto_selected_beam "
+            "from acoustic_samples where capture_id = ? order by offset_ms",
+            (capture_id,),
+        ).fetchall()
+
+    assert capture == (None, 0.5, 0, "silence")
+    assert samples == [(0, 90.0, 0.0), (250, 91.0, 300.0)]
 
 
 def test_segment_stores_direction_summary_and_samples(tmp_path: Path) -> None:
