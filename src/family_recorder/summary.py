@@ -81,11 +81,45 @@ DIRECTION_OUTPUT_CONTRACT = """\
 """
 
 TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
-CALENDAR_BLOCK = re.compile(r"<!--\s*FAMILYRECORDER_CALENDAR_EVENTS\s*(\[.*?\])\s*-->", re.DOTALL)
 LOGGER = logging.getLogger(__name__)
 
+CALENDAR_CANDIDATE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "events": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string"},
+                    "start": {"type": "string"},
+                    "end": {"type": "string"},
+                    "all_day": {"type": "boolean"},
+                    "member": {"type": "string"},
+                    "calendar_id": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                "required": [
+                    "title",
+                    "start",
+                    "end",
+                    "all_day",
+                    "member",
+                    "calendar_id",
+                    "notes",
+                ],
+            },
+        }
+    },
+    "required": ["events"],
+}
 
-def calendar_output_contract(
+
+def calendar_extraction_instructions(
     target_date: date,
     members: tuple[str, ...],
     member_calendar_ids: dict[str, tuple[str, ...]],
@@ -101,26 +135,27 @@ def calendar_output_contract(
         route_lines.append(f"  - {member}：{labels}")
     route_text = "\n".join(route_lines) if route_lines else "  - 尚未設定成員專屬日曆"
     return f"""\
-Google Calendar 候選事件規則（僅在最終摘要執行）：
-- 摘要最後必須附上一個 HTML comment，格式完全如下：
-  <!-- FAMILYRECORDER_CALENDAR_EVENTS
-  [{{"title":"事件名稱","start":"ISO 8601","end":"ISO 8601","all_day":false,
-    "member":"家庭成員或空字串","calendar_id":"可選日曆 ID 或空字串",
-    "notes":"簡短來源說明"}}]
-  -->
-- 今天的逐字稿日期是 {target_date.isoformat()}；已知家庭成員為：{member_text}。
+你是 FamilyRecorder 的 Google Calendar 候選事件擷取器。這是摘要完成後的獨立步驟。
+只輸出符合指定 JSON Schema 的物件；不得輸出 Markdown、HTML comment 或額外解釋。
+
+候選事件規則：
+- 本次家庭逐字稿日期是 {target_date.isoformat()}；已知家庭成員為：{member_text}。
 - 可選的家庭成員日曆如下；只有事件類型與名稱明確吻合時才填入 `calendar_id`：
 {route_text}
-- 只加入逐字稿明確提到、確實需要排入行事曆，而且開始日期與時間足以確定的未來事件。
-- 不得把一般對話、待辦、模糊時間或你推測的時間轉成事件；沒有候選事件時輸出空陣列。
+- 只加入來源文字明確提到、確實需要排入行事曆，而且日期足以確定的事件。
+- 日期明確但沒有開始時間（例如「明天考試」）時，必須建立全天候選事件；不得因缺少時間而省略。
+- 日期和開始時間都明確但沒有結束時間時，預設為 60 分鐘。
+- 可依 {target_date.isoformat()} 正確換算「明天／後天／下週三」；無法唯一換算的模糊日期不得猜測。
+- 一般對話、沒有日期的待辦、已確定取消的活動，不得轉成事件；沒有候選事件時輸出 `{{"events":[]}}`。
 - `member` 只能使用上列已知家庭成員姓名；無法確定就用空字串。
 - 有時間的事件使用含本地 UTC offset 的 ISO 8601；全天事件使用 YYYY-MM-DD，
   且 end 為不包含的次日日期。
-- 這些都只是待確認候選項目，不得聲稱已經建立行事曆事件。
+- 每個項目都只是待使用者確認的候選，不得建立或聲稱已建立行事曆事件。
+- `notes` 簡短保留來源日期、約略談話時間及不確定處，不得補造。
 """
 
 
-def extract_calendar_candidates(
+def parse_calendar_candidates(
     output: str,
     *,
     target_date: date,
@@ -128,18 +163,16 @@ def extract_calendar_candidates(
     default_calendar_id: str,
     member_calendar_ids: dict[str, tuple[str, ...]],
     member_default_calendar_ids: dict[str, str],
-) -> tuple[str, list[dict[str, object]]]:
-    match = CALENDAR_BLOCK.search(output)
-    if not match:
-        return output.strip(), []
-    cleaned = (output[: match.start()] + output[match.end() :]).strip()
+) -> list[dict[str, object]]:
     try:
-        payload = json.loads(match.group(1))
+        document = json.loads(output)
     except json.JSONDecodeError as exc:
-        LOGGER.warning("Ignoring invalid calendar candidate JSON: %s", exc)
-        return cleaned, []
+        raise SummaryError(f"Codex returned invalid calendar candidate JSON: {exc}") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("events"), list):
+        raise SummaryError("Codex calendar candidate output does not contain an events array")
+    payload = document["events"]
     if not isinstance(payload, list):
-        return cleaned, []
+        raise SummaryError("Codex calendar candidate output is not an array")
 
     candidates: list[dict[str, object]] = []
     allowed_members = set(members)
@@ -157,7 +190,7 @@ def extract_calendar_candidates(
             if all_day:
                 start_value = date.fromisoformat(starts_at)
                 end_value = date.fromisoformat(ends_at)
-                if end_value <= start_value:
+                if end_value <= start_value or start_value < target_date:
                     continue
                 starts_at, ends_at = start_value.isoformat(), end_value.isoformat()
             else:
@@ -167,7 +200,7 @@ def extract_calendar_candidates(
                     start_value = start_value.replace(tzinfo=local_timezone)
                 if end_value.tzinfo is None:
                     end_value = end_value.replace(tzinfo=local_timezone)
-                if end_value <= start_value:
+                if end_value <= start_value or start_value.date() < target_date:
                     continue
                 starts_at, ends_at = start_value.isoformat(), end_value.isoformat()
         except ValueError:
@@ -191,7 +224,7 @@ def extract_calendar_candidates(
                 or member_default_calendar_ids.get(member, default_calendar_id),
             }
         )
-    return cleaned, candidates
+    return candidates
 
 
 def previous_local_date(now: datetime | None = None) -> date:
@@ -306,16 +339,7 @@ class DailySummaryRunner:
         self.command_runner = command_runner
         self.binary_resolver = binary_resolver
 
-    def _request(self, instructions: str, content: str, extra_contract: str = "") -> str:
-        prompt = (
-            f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
-            f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DIRECTION_OUTPUT_CONTRACT}\n\n"
-            f"{extra_contract.strip()}\n\n"
-            f"{DATA_BOUNDARY}\n\n"
-            "--- FAMILYRECORDER TEXT START ---\n"
-            f"{content.strip()}\n"
-            "--- FAMILYRECORDER TEXT END ---\n"
-        )
+    def _run_codex(self, prompt: str, output_schema: dict[str, object] | None = None) -> str:
         binary = self.binary_resolver(self.config.summary.codex_binary_path)
         with tempfile.TemporaryDirectory(prefix="familyrecorder-summary-") as work_dir:
             command = [
@@ -332,6 +356,12 @@ class DailySummaryRunner:
                 "-C",
                 work_dir,
             ]
+            if output_schema is not None:
+                schema_path = Path(work_dir) / "calendar-candidate-schema.json"
+                schema_path.write_text(
+                    json.dumps(output_schema, ensure_ascii=False), encoding="utf-8"
+                )
+                command.extend(["--output-schema", str(schema_path)])
             if self.config.summary.model:
                 command.extend(["--model", self.config.summary.model])
             command.append("-")
@@ -346,18 +376,60 @@ class DailySummaryRunner:
                 )
             except subprocess.TimeoutExpired as exc:
                 raise SummaryError(
-                    f"Codex summary timed out after {self.config.summary.timeout_seconds} seconds"
+                    f"Codex request timed out after {self.config.summary.timeout_seconds} seconds"
                 ) from exc
             except OSError as exc:
                 raise SummaryError(f"Unable to start Codex: {exc}") from exc
 
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "unknown error").strip()
-            raise SummaryError(f"Codex summary failed (exit {result.returncode}): {detail}")
+            raise SummaryError(f"Codex request failed (exit {result.returncode}): {detail}")
         output = result.stdout.strip()
         if not output:
-            raise SummaryError("Codex returned an empty summary")
+            raise SummaryError("Codex returned an empty response")
         return output
+
+    def _request(self, instructions: str, content: str) -> str:
+        prompt = (
+            f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
+            f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DIRECTION_OUTPUT_CONTRACT}\n\n"
+            f"{DATA_BOUNDARY}\n\n"
+            "--- FAMILYRECORDER TEXT START ---\n"
+            f"{content.strip()}\n"
+            "--- FAMILYRECORDER TEXT END ---\n"
+        )
+        return self._run_codex(prompt)
+
+    def _request_calendar_candidates(
+        self, *, target_date: date, transcript: str, summary: str
+    ) -> list[dict[str, object]]:
+        instructions = calendar_extraction_instructions(
+            target_date,
+            self.config.speakers.members,
+            self.config.calendar.member_calendar_ids,
+            self.config.calendar.calendar_names,
+        )
+        source = f"已完成摘要：\n{summary.strip()}\n\n原始逐字稿：\n{transcript.strip()}"
+        if len(source) > self.config.summary.max_input_chars:
+            source = (
+                f"已完成摘要：\n{summary.strip()}\n\n"
+                "原始逐字稿過長，本次只依已完成摘要擷取候選事件。"
+            )
+        prompt = (
+            f"{instructions}\n\n{DATA_BOUNDARY}\n\n"
+            "--- FAMILYRECORDER TEXT START ---\n"
+            f"{source}\n"
+            "--- FAMILYRECORDER TEXT END ---\n"
+        )
+        output = self._run_codex(prompt, output_schema=CALENDAR_CANDIDATE_SCHEMA)
+        return parse_calendar_candidates(
+            output,
+            target_date=target_date,
+            members=self.config.speakers.members,
+            default_calendar_id=self.config.calendar.default_calendar_id,
+            member_calendar_ids=self.config.calendar.member_calendar_ids,
+            member_default_calendar_ids=self.config.calendar.member_default_calendar_ids,
+        )
 
     def run(self, target_date: date | None = None) -> Path:
         if not self.config.summary.enabled:
@@ -377,21 +449,10 @@ class DailySummaryRunner:
                 raise SummaryError(f"Transcript for {target_date.isoformat()} is empty")
 
             parts = split_transcript(transcript, self.config.summary.max_input_chars)
-            final_contract = (
-                calendar_output_contract(
-                    target_date,
-                    self.config.speakers.members,
-                    self.config.calendar.member_calendar_ids,
-                    self.config.calendar.calendar_names,
-                )
-                if self.config.calendar.enabled
-                else ""
-            )
             if len(parts) == 1:
                 summary = self._request(
                     self.config.summary.prompt,
                     f"日期：{target_date.isoformat()}\n\n逐字稿：\n{parts[0]}",
-                    final_contract,
                 )
             else:
                 partials = [
@@ -406,25 +467,36 @@ class DailySummaryRunner:
                     self.config.summary.prompt
                     + "\n以下是同一天各段的中間整理，請去重並整合成一份最終摘要。",
                     "\n\n--- 分段整理 ---\n\n".join(partials),
-                    final_contract,
                 )
 
-            calendar_candidates: list[dict[str, object]] = []
             if self.config.calendar.enabled:
-                summary, calendar_candidates = extract_calendar_candidates(
-                    summary,
-                    target_date=target_date,
-                    members=self.config.speakers.members,
-                    default_calendar_id=self.config.calendar.default_calendar_id,
-                    member_calendar_ids=self.config.calendar.member_calendar_ids,
-                    member_default_calendar_ids=self.config.calendar.member_default_calendar_ids,
-                )
-                storage.replace_pending_calendar_candidates(target_date, calendar_candidates)
-                if calendar_candidates:
-                    summary += (
-                        "\n\n> FamilyRecorder 已整理出 "
-                        f"{len(calendar_candidates)} 個待確認的 Google Calendar 事件。"
+                try:
+                    calendar_candidates = self._request_calendar_candidates(
+                        target_date=target_date,
+                        transcript=transcript,
+                        summary=summary,
                     )
+                except SummaryError as exc:
+                    LOGGER.warning(
+                        "Calendar candidate extraction failed; preserving pending candidates: %s",
+                        exc,
+                    )
+                    summary += (
+                        "\n\n> ⚠️ FamilyRecorder 本次無法整理 Google Calendar 候選事件；"
+                        "既有待確認項目未變更，請稍後重新執行摘要。"
+                    )
+                else:
+                    storage.replace_pending_calendar_candidates(target_date, calendar_candidates)
+                    if calendar_candidates:
+                        summary += (
+                            "\n\n> FamilyRecorder 已整理出 "
+                            f"{len(calendar_candidates)} 個待確認的 Google Calendar 事件。"
+                        )
+                    else:
+                        summary += (
+                            "\n\n> FamilyRecorder 本次沒有找到日期足夠明確的 "
+                            "Google Calendar 候選事件。"
+                        )
 
             summary_path = storage.summary_path_for(target_date)
             summary_path.write_text(

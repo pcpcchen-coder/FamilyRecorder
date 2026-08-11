@@ -20,13 +20,14 @@ from family_recorder.summary import (
 
 
 class FakeCommandRunner:
-    def __init__(self, stdout: str = "- 今日摘要：記得拿包裹。") -> None:
-        self.stdout = stdout
+    def __init__(self, stdout: str | list[str] = "- 今日摘要：記得拿包裹。") -> None:
+        self.stdout = [stdout] if isinstance(stdout, str) else stdout
         self.calls: list[tuple[list[str], dict[str, object]]] = []
 
     def __call__(self, command: list[str], **kwargs: object) -> SimpleNamespace:
         self.calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout=self.stdout, stderr="")
+        index = min(len(self.calls) - 1, len(self.stdout) - 1)
+        return SimpleNamespace(returncode=0, stdout=self.stdout[index], stderr="")
 
 
 def test_summary_sends_only_transcript_text_through_hardened_codex_exec(tmp_path: Path) -> None:
@@ -111,15 +112,13 @@ def test_summary_creates_pending_google_calendar_candidate_for_confirmation(
         "### 12:00 — 可能：陳樂融（88%）\n下週三晚上七點有學校說明會。\n",
         encoding="utf-8",
     )
-    output = """## 事件時間軸
+    summary_output = """## 事件時間軸
 - 約 12:00：提到學校說明會。
-
-<!-- FAMILYRECORDER_CALENDAR_EVENTS
-[{"title":"學校說明會","start":"2026-08-12T19:00:00+08:00",
+"""
+    calendar_output = """{"events":[{"title":"學校說明會","start":"2026-08-12T19:00:00+08:00",
   "end":"2026-08-12T20:00:00+08:00","all_day":false,
   "member":"陳樂融","calendar_id":"school-id","notes":"來源約 12:00"}]
--->
-"""
+}"""
     config = AppConfig(
         storage=StorageConfig(data_dir=tmp_path),
         speakers=SpeakerConfig(enabled=True, members=("陳樂融",)),
@@ -132,22 +131,100 @@ def test_summary_creates_pending_google_calendar_candidate_for_confirmation(
         ),
         summary=SummaryConfig(max_input_chars=10_000),
     )
-    command_runner = FakeCommandRunner(stdout=output)
+    command_runner = FakeCommandRunner(stdout=[summary_output, calendar_output])
     result = DailySummaryRunner(
         config,
         command_runner=command_runner,
         binary_resolver=lambda _configured: Path("/fake/codex"),
     ).run(target)
 
-    prompt = str(command_runner.calls[0][1]["input"])
-    assert "Google Calendar 候選事件規則" in prompt
-    assert "陳樂融" in prompt
-    assert "FAMILYRECORDER_CALENDAR_EVENTS" not in result.read_text(encoding="utf-8")
+    assert len(command_runner.calls) == 2
+    summary_prompt = str(command_runner.calls[0][1]["input"])
+    calendar_command, calendar_kwargs = command_runner.calls[1]
+    calendar_prompt = str(calendar_kwargs["input"])
+    assert "Google Calendar" not in summary_prompt
+    assert "Google Calendar 候選事件擷取器" in calendar_prompt
+    assert "陳樂融" in calendar_prompt
+    assert "--output-schema" in calendar_command
+    assert "已整理出 1 個待確認" in result.read_text(encoding="utf-8")
     with Storage(StorageConfig(data_dir=tmp_path)) as storage:
         pending = storage.pending_calendar_candidates()
     assert len(pending) == 1
     assert pending[0].member_name == "陳樂融"
     assert pending[0].suggested_calendar_id == "school-id"
+
+
+def test_calendar_date_without_time_becomes_all_day_candidate(tmp_path: Path) -> None:
+    target = date(2026, 8, 11)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text(
+        "### 15:00 — 可能：陳樂融（88%）\n明天考兩首詩。\n", encoding="utf-8"
+    )
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        speakers=SpeakerConfig(enabled=True, members=("陳樂融",)),
+        calendar=CalendarConfig(enabled=True, default_calendar_id="family-id"),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    command_runner = FakeCommandRunner(
+        stdout=[
+            "## 事件時間軸\n- 約 15:00：8 月 12 日考兩首詩。",
+            '{"events":[{"title":"考兩首詩","start":"2026-08-12",'
+            '"end":"2026-08-13","all_day":true,"member":"陳樂融",'
+            '"calendar_id":"","notes":"8 月 12 日；來源約 15:00"}]}',
+        ]
+    )
+
+    DailySummaryRunner(
+        config,
+        command_runner=command_runner,
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    prompt = str(command_runner.calls[1][1]["input"])
+    assert "必須建立全天候選事件" in prompt
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert len(pending) == 1
+    assert pending[0].all_day is True
+    assert pending[0].starts_at == "2026-08-12"
+    assert pending[0].ends_at == "2026-08-13"
+
+
+def test_calendar_extraction_failure_preserves_existing_pending_candidate(tmp_path: Path) -> None:
+    target = date(2026, 8, 11)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text("明天考試。", encoding="utf-8")
+    storage_config = StorageConfig(data_dir=tmp_path)
+    with Storage(storage_config) as storage:
+        storage.replace_pending_calendar_candidates(
+            target,
+            [
+                {
+                    "title": "既有事件",
+                    "starts_at": "2026-08-12",
+                    "ends_at": "2026-08-13",
+                    "all_day": True,
+                }
+            ],
+        )
+    config = AppConfig(
+        storage=storage_config,
+        calendar=CalendarConfig(enabled=True, default_calendar_id="family-id"),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    result = DailySummaryRunner(
+        config,
+        command_runner=FakeCommandRunner(stdout=["今日摘要", "not json"]),
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    assert "既有待確認項目未變更" in result.read_text(encoding="utf-8")
+    with Storage(storage_config) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert [candidate.title for candidate in pending] == ["既有事件"]
 
 
 def test_every_chunked_summary_request_keeps_time_contract(tmp_path: Path) -> None:
