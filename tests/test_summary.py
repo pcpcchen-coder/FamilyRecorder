@@ -2,7 +2,14 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
-from family_recorder.config import AppConfig, StorageConfig, SummaryConfig
+from family_recorder.config import (
+    AppConfig,
+    CalendarConfig,
+    SpeakerConfig,
+    StorageConfig,
+    SummaryConfig,
+)
+from family_recorder.storage import Storage
 from family_recorder.summary import (
     DailySummaryRunner,
     check_codex_login,
@@ -92,6 +99,55 @@ def test_summary_uses_codex_account_default_model_when_model_is_empty(tmp_path: 
 
     command, _kwargs = command_runner.calls[0]
     assert "--model" not in command
+
+
+def test_summary_creates_pending_google_calendar_candidate_for_confirmation(
+    tmp_path: Path,
+) -> None:
+    target = date(2026, 8, 9)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text(
+        "### 12:00 — 可能：陳樂融（88%）\n下週三晚上七點有學校說明會。\n",
+        encoding="utf-8",
+    )
+    output = """## 事件時間軸
+- 約 12:00：提到學校說明會。
+
+<!-- FAMILYRECORDER_CALENDAR_EVENTS
+[{"title":"學校說明會","start":"2026-08-12T19:00:00+08:00",
+  "end":"2026-08-12T20:00:00+08:00","all_day":false,
+  "member":"陳樂融","calendar_id":"school-id","notes":"來源約 12:00"}]
+-->
+"""
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        speakers=SpeakerConfig(enabled=True, members=("陳樂融",)),
+        calendar=CalendarConfig(
+            enabled=True,
+            default_calendar_id="family-id",
+            calendar_names={"school-id": "學校", "family-id": "家庭"},
+            member_calendar_ids={"陳樂融": ("school-id",)},
+            member_default_calendar_ids={"陳樂融": "school-id"},
+        ),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    command_runner = FakeCommandRunner(stdout=output)
+    result = DailySummaryRunner(
+        config,
+        command_runner=command_runner,
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    prompt = str(command_runner.calls[0][1]["input"])
+    assert "Google Calendar 候選事件規則" in prompt
+    assert "陳樂融" in prompt
+    assert "FAMILYRECORDER_CALENDAR_EVENTS" not in result.read_text(encoding="utf-8")
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert len(pending) == 1
+    assert pending[0].member_name == "陳樂融"
+    assert pending[0].suggested_calendar_id == "school-id"
 
 
 def test_every_chunked_summary_request_keeps_time_contract(tmp_path: Path) -> None:

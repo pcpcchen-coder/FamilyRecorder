@@ -55,6 +55,18 @@ direction:
   multiple_direction_min_ratio: 0.25
   usb_timeout_ms: 1000
 
+# Google Calendar is the default and currently supported calendar provider.
+# FamilyRecorder writes through the Google account already added to macOS
+# Calendar. It only creates an event after the user confirms it in the menu.
+calendar:
+  enabled: false
+  provider: "google"
+  default_calendar_id: ""
+  default_calendar_name: ""
+  calendar_names: {}
+  member_calendar_ids: {}
+  member_default_calendar_ids: {}
+
 summary:
   enabled: true
   # Uses the official Codex CLI and its saved "Sign in with ChatGPT" session.

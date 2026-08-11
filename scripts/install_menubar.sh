@@ -59,7 +59,7 @@ if [[ -x "$LSREGISTER" && -d "$APP_ROOT" ]]; then
   "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
 fi
 rm -f "$APP_ROOT/Contents/MacOS/FamilyRecorderMenuBar"
-xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation \
+xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -framework EventKit \
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"

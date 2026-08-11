@@ -17,7 +17,7 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.10.2</string>
+  <string>0.11.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
@@ -28,5 +28,9 @@
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>FamilyRecorder 需要使用 XVF3800 麥克風來建立家庭成員聲音樣本與本機逐字稿。</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>FamilyRecorder 需要存取行事曆，才能在你確認後把家庭事件加入 Google Calendar。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>FamilyRecorder 需要完整行事曆權限，才能列出可選日曆並在你確認後建立事件。</string>
 </dict>
 </plist>

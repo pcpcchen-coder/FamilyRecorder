@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Darwin
+import EventKit
 import Foundation
 
 struct WhisperModel: Decodable {
@@ -40,6 +41,50 @@ struct SpeakerMember: Decodable {
     }
 }
 
+struct PendingCalendarEvent: Decodable {
+    let id: Int
+    let summaryDate: String
+    let title: String
+    let startsAt: String
+    let endsAt: String
+    let allDay: Bool
+    let notes: String
+    let memberName: String
+    let suggestedCalendarID: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case summaryDate = "summary_date"
+        case title
+        case startsAt = "starts_at"
+        case endsAt = "ends_at"
+        case allDay = "all_day"
+        case notes
+        case memberName = "member_name"
+        case suggestedCalendarID = "suggested_calendar_id"
+    }
+}
+
+final class CalendarChoice: NSObject {
+    let id: String
+    let name: String
+
+    init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+final class MemberCalendarChoice: NSObject {
+    let member: String
+    let calendarID: String
+
+    init(member: String, calendarID: String) {
+        self.member = member
+        self.calendarID = calendarID
+    }
+}
+
 struct RecorderStatus: Decodable {
     let paused: Bool
     let pauseLabel: String
@@ -64,6 +109,13 @@ struct RecorderStatus: Decodable {
     let speakerProfilesDir: String
     let directionEnabled: Bool
     let directionFrontAngleDegrees: Double
+    let calendarEnabled: Bool
+    let calendarProvider: String
+    let calendarDefaultID: String
+    let calendarDefaultName: String
+    let calendarMemberIDs: [String: [String]]
+    let calendarMemberDefaultIDs: [String: String]
+    let calendarPendingEvents: [PendingCalendarEvent]
 
     enum CodingKeys: String, CodingKey {
         case paused
@@ -89,6 +141,13 @@ struct RecorderStatus: Decodable {
         case speakerProfilesDir = "speaker_profiles_dir"
         case directionEnabled = "direction_enabled"
         case directionFrontAngleDegrees = "direction_front_angle_degrees"
+        case calendarEnabled = "calendar_enabled"
+        case calendarProvider = "calendar_provider"
+        case calendarDefaultID = "calendar_default_id"
+        case calendarDefaultName = "calendar_default_name"
+        case calendarMemberIDs = "calendar_member_ids"
+        case calendarMemberDefaultIDs = "calendar_member_default_ids"
+        case calendarPendingEvents = "calendar_pending_events"
     }
 }
 
@@ -98,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let uninstallerPath: String
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
+    private let eventStore = EKEventStore()
+    private var availableGoogleCalendars: [EKCalendar] = []
     private var currentStatus: RecorderStatus?
     private var downloadingWhisperModel: DownloadableWhisperModel?
     private var enrollingSpeakerName: String?
@@ -119,6 +180,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         menu.delegate = self
         statusItem.menu = menu
+        let calendarStatus = EKEventStore.authorizationStatus(for: .event)
+        if #available(macOS 14.0, *) {
+            if calendarStatus == .fullAccess {
+                refreshGoogleCalendars()
+            }
+        } else if calendarStatus == .authorized {
+            refreshGoogleCalendars()
+        }
         refreshStatus(rebuildMenu: true)
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             // A first-run foreground explanation makes the following macOS TCC
@@ -547,6 +616,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         directionItem.submenu = directionMenu
         menu.addItem(directionItem)
 
+        menu.addItem(buildCalendarMenu(status))
+
         menu.addItem(.separator())
         menu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
         menu.addItem(item("重新啟動錄音服務", action: #selector(restartListenerFromMenu)))
@@ -555,6 +626,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("解除安裝 FamilyRecorder…", action: #selector(openUninstaller)))
         menu.addItem(item("結束選單列程式", action: #selector(quitMenuBar)))
+    }
+
+    private func buildCalendarMenu(_ status: RecorderStatus) -> NSMenuItem {
+        let calendarItem = item("Google Calendar")
+        let calendarMenu = NSMenu()
+        let defaultName = status.calendarDefaultName.isEmpty ? "尚未選擇" : status.calendarDefaultName
+        calendarMenu.addItem(
+            item(
+                status.calendarEnabled
+                    ? "已開啟 · 預設：\(defaultName)"
+                    : "尚未開啟 · 預設：\(defaultName)",
+                enabled: false
+            )
+        )
+        calendarMenu.addItem(
+            item("連接／選擇預設 Google Calendar…", action: #selector(chooseDefaultCalendar))
+        )
+        if !status.calendarDefaultID.isEmpty {
+            calendarMenu.addItem(
+                item(
+                    status.calendarEnabled ? "暫停產生候選事件" : "開啟候選事件",
+                    action: #selector(toggleCalendarCandidates)
+                )
+            )
+        }
+
+        let mappingItem = item("家庭成員日曆對應")
+        let mappingMenu = NSMenu()
+        if status.speakerMembers.isEmpty {
+            mappingMenu.addItem(item("請先設定家庭成員", enabled: false))
+        } else if availableGoogleCalendars.isEmpty {
+            mappingMenu.addItem(item("請先連接 Google Calendar", enabled: false))
+        } else {
+            for member in status.speakerMembers {
+                let memberItem = item(member.name)
+                let memberMenu = NSMenu()
+                let assigned = Set(status.calendarMemberIDs[member.name] ?? [])
+                let memberDefault = status.calendarMemberDefaultIDs[member.name]
+                for calendar in availableGoogleCalendars {
+                    let choice = MemberCalendarChoice(
+                        member: member.name,
+                        calendarID: calendar.calendarIdentifier
+                    )
+                    let calendarItem = item(
+                        calendarDisplayName(calendar),
+                        action: #selector(toggleMemberCalendar),
+                        representedObject: choice
+                    )
+                    calendarItem.state = assigned.contains(calendar.calendarIdentifier) ? .on : .off
+                    memberMenu.addItem(calendarItem)
+                }
+                if !assigned.isEmpty {
+                    memberMenu.addItem(.separator())
+                    memberMenu.addItem(item("此成員的預設日曆", enabled: false))
+                    for calendar in availableGoogleCalendars
+                    where assigned.contains(calendar.calendarIdentifier) {
+                        let choice = MemberCalendarChoice(
+                            member: member.name,
+                            calendarID: calendar.calendarIdentifier
+                        )
+                        let defaultItem = item(
+                            calendarDisplayName(calendar),
+                            action: #selector(selectMemberDefaultCalendar),
+                            representedObject: choice
+                        )
+                        defaultItem.state = memberDefault == calendar.calendarIdentifier ? .on : .off
+                        memberMenu.addItem(defaultItem)
+                    }
+                }
+                memberItem.submenu = memberMenu
+                mappingMenu.addItem(memberItem)
+            }
+        }
+        mappingItem.submenu = mappingMenu
+        calendarMenu.addItem(mappingItem)
+
+        calendarMenu.addItem(.separator())
+        let pendingItem = item("待確認事件（\(status.calendarPendingEvents.count)）")
+        let pendingMenu = NSMenu()
+        if status.calendarPendingEvents.isEmpty {
+            pendingMenu.addItem(item("目前沒有候選事件", enabled: false))
+        } else {
+            for event in status.calendarPendingEvents {
+                let eventItem = item("\(calendarEventTime(event)) · \(event.title)")
+                let eventMenu = NSMenu()
+                if !event.memberName.isEmpty {
+                    eventMenu.addItem(item("建議成員：\(event.memberName)", enabled: false))
+                }
+                eventMenu.addItem(
+                    item(
+                        "確認並加入建議日曆…",
+                        action: #selector(confirmCalendarEvent),
+                        representedObject: NSNumber(value: event.id)
+                    )
+                )
+                eventMenu.addItem(
+                    item(
+                        "選擇其他 Google Calendar…",
+                        action: #selector(confirmCalendarEventWithChoice),
+                        representedObject: NSNumber(value: event.id)
+                    )
+                )
+                eventMenu.addItem(
+                    item(
+                        "略過",
+                        action: #selector(dismissCalendarEvent),
+                        representedObject: NSNumber(value: event.id)
+                    )
+                )
+                eventItem.submenu = eventMenu
+                pendingMenu.addItem(eventItem)
+            }
+        }
+        pendingItem.submenu = pendingMenu
+        calendarMenu.addItem(pendingItem)
+        calendarMenu.addItem(.separator())
+        calendarMenu.addItem(item("AI 只建立候選項目；確認後才寫入日曆", enabled: false))
+        calendarItem.submenu = calendarMenu
+        return calendarItem
     }
 
     private func runSimpleAction(_ arguments: [String], successTitle: String) {
@@ -697,6 +887,283 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         runSimpleAction(["reset-summary-prompt"], successTitle: "已恢復內建摘要 Prompt")
+    }
+
+    private func calendarDisplayName(_ calendar: EKCalendar) -> String {
+        "\(calendar.source.title) › \(calendar.title)"
+    }
+
+    private func refreshGoogleCalendars() {
+        availableGoogleCalendars = eventStore.calendars(for: .event)
+            .filter { calendar in
+                guard calendar.allowsContentModifications else { return false }
+                let source = calendar.source.title.lowercased()
+                return calendar.source.sourceType == .calDAV
+                    && !source.contains("icloud")
+            }
+            .sorted { calendarDisplayName($0) < calendarDisplayName($1) }
+    }
+
+    private func requestCalendarAccess(completion: @escaping (Bool) -> Void) {
+        NSApp.activate(ignoringOtherApps: true)
+        let finished: (Bool, Error?) -> Void = { [weak self] granted, _ in
+            DispatchQueue.main.async {
+                if granted {
+                    self?.refreshGoogleCalendars()
+                }
+                completion(granted)
+            }
+        }
+        if #available(macOS 14.0, *) {
+            eventStore.requestFullAccessToEvents(completion: finished)
+        } else {
+            eventStore.requestAccess(to: .event, completion: finished)
+        }
+    }
+
+    private func showCalendarPermissionAlert() {
+        let alert = NSAlert()
+        alert.messageText = "FamilyRecorder 需要行事曆權限"
+        alert.informativeText =
+            "請在「系統設定 → 隱私權與安全性 → 行事曆」允許 FamilyRecorder，才能列出日曆並在確認後建立事件。"
+        alert.addButton(withTitle: "打開系統設定")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(
+               string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+           )
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func showMissingGoogleCalendarAlert() {
+        let alert = NSAlert()
+        alert.messageText = "找不到可寫入的 Google Calendar"
+        alert.informativeText =
+            "請先在 macOS「系統設定 → Internet 帳號」加入 Google 帳號並開啟行事曆同步，再回來重試。"
+        alert.addButton(withTitle: "打開 Internet 帳號")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preferences.internetaccounts")
+        {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func chooseCalendar(title: String) -> EKCalendar? {
+        guard !availableGoogleCalendars.isEmpty else {
+            showMissingGoogleCalendarAlert()
+            return nil
+        }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "只列出 macOS 行事曆中可寫入的 Google／CalDAV 日曆。"
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 460, height: 28))
+        for calendar in availableGoogleCalendars {
+            popup.addItem(withTitle: calendarDisplayName(calendar))
+        }
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "選擇")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return availableGoogleCalendars[popup.indexOfSelectedItem]
+    }
+
+    @objc private func chooseDefaultCalendar() {
+        requestCalendarAccess { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.showCalendarPermissionAlert()
+                return
+            }
+            guard let calendar = self.chooseCalendar(title: "選擇預設 Google Calendar") else {
+                return
+            }
+            self.runSimpleAction(
+                [
+                    "set-calendar-default",
+                    "--calendar-id", calendar.calendarIdentifier,
+                    "--calendar-name", self.calendarDisplayName(calendar),
+                ],
+                successTitle: "Google Calendar 已連接"
+            )
+        }
+    }
+
+    @objc private func toggleCalendarCandidates() {
+        let enabled = !(currentStatus?.calendarEnabled ?? false)
+        runSimpleAction(
+            ["set-calendar-enabled", "--enabled", enabled ? "true" : "false"],
+            successTitle: enabled ? "Google Calendar 候選事件已開啟" : "候選事件已暫停"
+        )
+    }
+
+    @objc private func toggleMemberCalendar(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? MemberCalendarChoice else { return }
+        let assigned = currentStatus?.calendarMemberIDs[choice.member] ?? []
+        runSimpleAction(
+            [
+                "set-member-calendar",
+                "--member", choice.member,
+                "--calendar-id", choice.calendarID,
+                "--calendar-name", availableGoogleCalendars.first {
+                    $0.calendarIdentifier == choice.calendarID
+                }.map(calendarDisplayName) ?? "",
+                "--enabled", assigned.contains(choice.calendarID) ? "false" : "true",
+            ],
+            successTitle: "家庭成員日曆對應已更新"
+        )
+    }
+
+    @objc private func selectMemberDefaultCalendar(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? MemberCalendarChoice else { return }
+        runSimpleAction(
+            [
+                "set-member-calendar-default",
+                "--member", choice.member,
+                "--calendar-id", choice.calendarID,
+            ],
+            successTitle: "家庭成員預設日曆已更新"
+        )
+    }
+
+    private func pendingCalendarEvent(_ sender: NSMenuItem) -> PendingCalendarEvent? {
+        guard let number = sender.representedObject as? NSNumber else { return nil }
+        return currentStatus?.calendarPendingEvents.first { $0.id == number.intValue }
+    }
+
+    private func calendarEventTime(_ event: PendingCalendarEvent) -> String {
+        if event.allDay {
+            return event.startsAt
+        }
+        guard let date = ISO8601DateFormatter().date(from: event.startsAt) else {
+            return event.startsAt
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_TW")
+        formatter.dateFormat = "M/d HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func dates(for event: PendingCalendarEvent) -> (Date, Date)? {
+        if event.allDay {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = .current
+            formatter.dateFormat = "yyyy-MM-dd"
+            guard let start = formatter.date(from: event.startsAt),
+                  let end = formatter.date(from: event.endsAt)
+            else { return nil }
+            return (start, end)
+        }
+        let formatter = ISO8601DateFormatter()
+        guard let start = formatter.date(from: event.startsAt),
+              let end = formatter.date(from: event.endsAt)
+        else { return nil }
+        return (start, end)
+    }
+
+    private func suggestedCalendar(for event: PendingCalendarEvent) -> EKCalendar? {
+        guard let status = currentStatus else { return nil }
+        let memberDefault = status.calendarMemberDefaultIDs[event.memberName]
+        let calendarID = (!event.suggestedCalendarID.isEmpty ? event.suggestedCalendarID : nil)
+            ?? memberDefault
+            ?? (!status.calendarDefaultID.isEmpty ? status.calendarDefaultID : nil)
+        return availableGoogleCalendars.first { $0.calendarIdentifier == calendarID }
+    }
+
+    @objc private func confirmCalendarEvent(_ sender: NSMenuItem) {
+        guard let event = pendingCalendarEvent(sender) else { return }
+        requestCalendarAccess { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.showCalendarPermissionAlert()
+                return
+            }
+            guard let calendar = self.suggestedCalendar(for: event)
+                ?? self.chooseCalendar(title: "選擇要加入的 Google Calendar")
+            else { return }
+            self.createCalendarEvent(event, in: calendar)
+        }
+    }
+
+    @objc private func confirmCalendarEventWithChoice(_ sender: NSMenuItem) {
+        guard let event = pendingCalendarEvent(sender) else { return }
+        requestCalendarAccess { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.showCalendarPermissionAlert()
+                return
+            }
+            guard let calendar = self.chooseCalendar(title: "選擇要加入的 Google Calendar") else {
+                return
+            }
+            self.createCalendarEvent(event, in: calendar)
+        }
+    }
+
+    private func createCalendarEvent(_ candidate: PendingCalendarEvent, in calendar: EKCalendar) {
+        guard let (startDate, endDate) = dates(for: candidate) else {
+            showAlert(title: "事件時間格式錯誤", message: "請略過這個候選事件並手動建立。")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "加入 Google Calendar？"
+        let member = candidate.memberName.isEmpty ? "未指定" : candidate.memberName
+        alert.informativeText =
+            "事件：\(candidate.title)\n時間：\(calendarEventTime(candidate))\n成員：\(member)\n日曆：\(calendarDisplayName(calendar))\n\n只有按下確認後才會真正建立。"
+        alert.addButton(withTitle: "確認建立")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let event = EKEvent(eventStore: eventStore)
+        event.calendar = calendar
+        event.title = candidate.title
+        event.startDate = startDate
+        event.endDate = endDate
+        event.isAllDay = candidate.allDay
+        let sourceNote = "由 FamilyRecorder 每日摘要產生，並經使用者確認。"
+        event.notes = candidate.notes.isEmpty ? sourceNote : "\(sourceNote)\n\(candidate.notes)"
+        do {
+            try eventStore.save(event, span: .thisEvent, commit: true)
+        } catch {
+            showAlert(title: "無法建立行事曆事件", message: error.localizedDescription)
+            return
+        }
+        runRecorderAsync(
+            [
+                "calendar-event-created",
+                "--id", String(candidate.id),
+                "--external-id", event.eventIdentifier ?? "",
+            ]
+        ) { [weak self] status, output in
+            self?.refreshStatus(rebuildMenu: true)
+            self?.showAlert(
+                title: status == 0 ? "已加入 Google Calendar" : "事件已建立，但狀態更新失敗",
+                message: status == 0 ? self?.calendarDisplayName(calendar) ?? output : output
+            )
+        }
+    }
+
+    @objc private func dismissCalendarEvent(_ sender: NSMenuItem) {
+        guard let event = pendingCalendarEvent(sender) else { return }
+        let alert = NSAlert()
+        alert.messageText = "略過「\(event.title)」？"
+        alert.informativeText = "這個候選項目不會建立到 Google Calendar。"
+        alert.addButton(withTitle: "略過")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runSimpleAction(
+            ["dismiss-calendar-event", "--id", String(event.id)],
+            successTitle: "候選事件已略過"
+        )
     }
 
     @objc private func editSpeakerMembers() {

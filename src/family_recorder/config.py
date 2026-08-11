@@ -69,6 +69,17 @@ class DirectionConfig:
     usb_timeout_ms: int = 1_000
 
 
+@dataclass(frozen=True)
+class CalendarConfig:
+    enabled: bool = False
+    provider: str = "google"
+    default_calendar_id: str = ""
+    default_calendar_name: str = ""
+    calendar_names: dict[str, str] = field(default_factory=dict)
+    member_calendar_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    member_default_calendar_ids: dict[str, str] = field(default_factory=dict)
+
+
 DEFAULT_SUMMARY_PROMPT = """\
 你是家庭聲音日誌整理助手。只根據逐字稿內容整理，不得補造事件。
 輸出繁體中文 Markdown，列出事件時間軸、依可能說話者整理的家庭成員重點、
@@ -105,6 +116,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     speakers: SpeakerConfig = field(default_factory=SpeakerConfig)
     direction: DirectionConfig = field(default_factory=DirectionConfig)
+    calendar: CalendarConfig = field(default_factory=CalendarConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     placement_test: PlacementTestConfig = field(default_factory=PlacementTestConfig)
 
@@ -171,6 +183,34 @@ def load_config(path: str | Path) -> AppConfig:
 
     direction = DirectionConfig(**_known_values(DirectionConfig, raw.get("direction", {})))
 
+    calendar_values = _known_values(CalendarConfig, raw.get("calendar", {}))
+    if "member_calendar_ids" in calendar_values:
+        mapping = calendar_values["member_calendar_ids"]
+        if not isinstance(mapping, dict):
+            raise ValueError("calendar.member_calendar_ids must be a YAML mapping")
+        calendar_values["member_calendar_ids"] = {
+            str(member): tuple(str(calendar_id) for calendar_id in calendar_ids)
+            for member, calendar_ids in mapping.items()
+            if isinstance(calendar_ids, list)
+        }
+        if len(calendar_values["member_calendar_ids"]) != len(mapping):
+            raise ValueError("calendar.member_calendar_ids values must be YAML lists")
+    if "calendar_names" in calendar_values:
+        names = calendar_values["calendar_names"]
+        if not isinstance(names, dict):
+            raise ValueError("calendar.calendar_names must be a YAML mapping")
+        calendar_values["calendar_names"] = {
+            str(calendar_id): str(name) for calendar_id, name in names.items()
+        }
+    if "member_default_calendar_ids" in calendar_values:
+        defaults = calendar_values["member_default_calendar_ids"]
+        if not isinstance(defaults, dict):
+            raise ValueError("calendar.member_default_calendar_ids must be a YAML mapping")
+        calendar_values["member_default_calendar_ids"] = {
+            str(member): str(calendar_id) for member, calendar_id in defaults.items()
+        }
+    calendar = CalendarConfig(**calendar_values)
+
     summary = SummaryConfig(**_known_values(SummaryConfig, raw.get("summary", {})))
 
     placement_values = _known_values(PlacementTestConfig, raw.get("placement_test", {}))
@@ -188,6 +228,7 @@ def load_config(path: str | Path) -> AppConfig:
         storage=storage,
         speakers=speakers,
         direction=direction,
+        calendar=calendar,
         summary=summary,
         placement_test=placement,
     )
@@ -242,6 +283,20 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("direction.multiple_direction_min_ratio must be between 0.1 and 0.5")
     if not 100 <= config.direction.usb_timeout_ms <= 10_000:
         raise ValueError("direction.usb_timeout_ms must be between 100 and 10000")
+    if config.calendar.provider != "google":
+        raise ValueError("calendar.provider must be 'google'")
+    if any(
+        not calendar_id or not name for calendar_id, name in config.calendar.calendar_names.items()
+    ):
+        raise ValueError("calendar names cannot contain empty values")
+    for member, calendar_ids in config.calendar.member_calendar_ids.items():
+        if not member or any(not calendar_id for calendar_id in calendar_ids):
+            raise ValueError("calendar member mappings cannot contain empty values")
+        if len(calendar_ids) != len(set(calendar_ids)):
+            raise ValueError("calendar member mappings cannot contain duplicate calendar IDs")
+    for member, calendar_id in config.calendar.member_default_calendar_ids.items():
+        if calendar_id not in config.calendar.member_calendar_ids.get(member, ()):
+            raise ValueError("each member default calendar must also be assigned to that member")
     if not 0 <= config.summary.hour <= 23 or not 0 <= config.summary.minute <= 59:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:

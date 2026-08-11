@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
 import shutil
@@ -79,6 +81,117 @@ DIRECTION_OUTPUT_CONTRACT = """\
 """
 
 TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
+CALENDAR_BLOCK = re.compile(r"<!--\s*FAMILYRECORDER_CALENDAR_EVENTS\s*(\[.*?\])\s*-->", re.DOTALL)
+LOGGER = logging.getLogger(__name__)
+
+
+def calendar_output_contract(
+    target_date: date,
+    members: tuple[str, ...],
+    member_calendar_ids: dict[str, tuple[str, ...]],
+    calendar_names: dict[str, str],
+) -> str:
+    member_text = "、".join(members) if members else "未設定家庭成員"
+    route_lines = []
+    for member, calendar_ids in member_calendar_ids.items():
+        labels = "、".join(
+            f"{calendar_names.get(calendar_id, '未命名')} [{calendar_id}]"
+            for calendar_id in calendar_ids
+        )
+        route_lines.append(f"  - {member}：{labels}")
+    route_text = "\n".join(route_lines) if route_lines else "  - 尚未設定成員專屬日曆"
+    return f"""\
+Google Calendar 候選事件規則（僅在最終摘要執行）：
+- 摘要最後必須附上一個 HTML comment，格式完全如下：
+  <!-- FAMILYRECORDER_CALENDAR_EVENTS
+  [{{"title":"事件名稱","start":"ISO 8601","end":"ISO 8601","all_day":false,
+    "member":"家庭成員或空字串","calendar_id":"可選日曆 ID 或空字串",
+    "notes":"簡短來源說明"}}]
+  -->
+- 今天的逐字稿日期是 {target_date.isoformat()}；已知家庭成員為：{member_text}。
+- 可選的家庭成員日曆如下；只有事件類型與名稱明確吻合時才填入 `calendar_id`：
+{route_text}
+- 只加入逐字稿明確提到、確實需要排入行事曆，而且開始日期與時間足以確定的未來事件。
+- 不得把一般對話、待辦、模糊時間或你推測的時間轉成事件；沒有候選事件時輸出空陣列。
+- `member` 只能使用上列已知家庭成員姓名；無法確定就用空字串。
+- 有時間的事件使用含本地 UTC offset 的 ISO 8601；全天事件使用 YYYY-MM-DD，
+  且 end 為不包含的次日日期。
+- 這些都只是待確認候選項目，不得聲稱已經建立行事曆事件。
+"""
+
+
+def extract_calendar_candidates(
+    output: str,
+    *,
+    target_date: date,
+    members: tuple[str, ...],
+    default_calendar_id: str,
+    member_calendar_ids: dict[str, tuple[str, ...]],
+    member_default_calendar_ids: dict[str, str],
+) -> tuple[str, list[dict[str, object]]]:
+    match = CALENDAR_BLOCK.search(output)
+    if not match:
+        return output.strip(), []
+    cleaned = (output[: match.start()] + output[match.end() :]).strip()
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        LOGGER.warning("Ignoring invalid calendar candidate JSON: %s", exc)
+        return cleaned, []
+    if not isinstance(payload, list):
+        return cleaned, []
+
+    candidates: list[dict[str, object]] = []
+    allowed_members = set(members)
+    local_timezone = datetime.now().astimezone().tzinfo
+    for raw in payload[:20]:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title", "")).strip()[:160]
+        starts_at = str(raw.get("start", "")).strip()
+        ends_at = str(raw.get("end", "")).strip()
+        all_day = bool(raw.get("all_day", False))
+        if not title or not starts_at or not ends_at:
+            continue
+        try:
+            if all_day:
+                start_value = date.fromisoformat(starts_at)
+                end_value = date.fromisoformat(ends_at)
+                if end_value <= start_value:
+                    continue
+                starts_at, ends_at = start_value.isoformat(), end_value.isoformat()
+            else:
+                start_value = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+                end_value = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+                if start_value.tzinfo is None:
+                    start_value = start_value.replace(tzinfo=local_timezone)
+                if end_value.tzinfo is None:
+                    end_value = end_value.replace(tzinfo=local_timezone)
+                if end_value <= start_value:
+                    continue
+                starts_at, ends_at = start_value.isoformat(), end_value.isoformat()
+        except ValueError:
+            continue
+        member = str(raw.get("member", "")).strip()
+        if member not in allowed_members:
+            member = ""
+        requested_calendar_id = str(raw.get("calendar_id", "")).strip()
+        allowed_calendar_ids = member_calendar_ids.get(member, ())
+        if requested_calendar_id not in allowed_calendar_ids:
+            requested_calendar_id = ""
+        candidates.append(
+            {
+                "title": title,
+                "starts_at": starts_at,
+                "ends_at": ends_at,
+                "all_day": all_day,
+                "notes": str(raw.get("notes", "")).strip()[:1_000],
+                "member_name": member,
+                "suggested_calendar_id": requested_calendar_id
+                or member_default_calendar_ids.get(member, default_calendar_id),
+            }
+        )
+    return cleaned, candidates
 
 
 def previous_local_date(now: datetime | None = None) -> date:
@@ -193,10 +306,11 @@ class DailySummaryRunner:
         self.command_runner = command_runner
         self.binary_resolver = binary_resolver
 
-    def _request(self, instructions: str, content: str) -> str:
+    def _request(self, instructions: str, content: str, extra_contract: str = "") -> str:
         prompt = (
             f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
             f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DIRECTION_OUTPUT_CONTRACT}\n\n"
+            f"{extra_contract.strip()}\n\n"
             f"{DATA_BOUNDARY}\n\n"
             "--- FAMILYRECORDER TEXT START ---\n"
             f"{content.strip()}\n"
@@ -263,10 +377,21 @@ class DailySummaryRunner:
                 raise SummaryError(f"Transcript for {target_date.isoformat()} is empty")
 
             parts = split_transcript(transcript, self.config.summary.max_input_chars)
+            final_contract = (
+                calendar_output_contract(
+                    target_date,
+                    self.config.speakers.members,
+                    self.config.calendar.member_calendar_ids,
+                    self.config.calendar.calendar_names,
+                )
+                if self.config.calendar.enabled
+                else ""
+            )
             if len(parts) == 1:
                 summary = self._request(
                     self.config.summary.prompt,
                     f"日期：{target_date.isoformat()}\n\n逐字稿：\n{parts[0]}",
+                    final_contract,
                 )
             else:
                 partials = [
@@ -281,7 +406,25 @@ class DailySummaryRunner:
                     self.config.summary.prompt
                     + "\n以下是同一天各段的中間整理，請去重並整合成一份最終摘要。",
                     "\n\n--- 分段整理 ---\n\n".join(partials),
+                    final_contract,
                 )
+
+            calendar_candidates: list[dict[str, object]] = []
+            if self.config.calendar.enabled:
+                summary, calendar_candidates = extract_calendar_candidates(
+                    summary,
+                    target_date=target_date,
+                    members=self.config.speakers.members,
+                    default_calendar_id=self.config.calendar.default_calendar_id,
+                    member_calendar_ids=self.config.calendar.member_calendar_ids,
+                    member_default_calendar_ids=self.config.calendar.member_default_calendar_ids,
+                )
+                storage.replace_pending_calendar_candidates(target_date, calendar_candidates)
+                if calendar_candidates:
+                    summary += (
+                        "\n\n> FamilyRecorder 已整理出 "
+                        f"{len(calendar_candidates)} 個待確認的 Google Calendar 事件。"
+                    )
 
             summary_path = storage.summary_path_for(target_date)
             summary_path.write_text(

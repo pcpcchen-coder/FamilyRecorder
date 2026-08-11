@@ -142,3 +142,29 @@ def test_segment_stores_direction_summary_and_samples(tmp_path: Path) -> None:
             (row_id,),
         ).fetchall()
         assert samples == [(0, 88.0, 1), (250, 90.0, 1), (500, 92.0, 1)]
+
+
+def test_calendar_candidates_are_pending_until_confirmed(tmp_path: Path) -> None:
+    target = datetime(2026, 8, 9, tzinfo=UTC).date()
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        storage.replace_pending_calendar_candidates(
+            target,
+            [
+                {
+                    "title": "學校說明會",
+                    "starts_at": "2026-08-12T19:00:00+08:00",
+                    "ends_at": "2026-08-12T20:00:00+08:00",
+                    "all_day": False,
+                    "notes": "逐字稿明確提到",
+                    "member_name": "陳樂融",
+                    "suggested_calendar_id": "school-id",
+                }
+            ],
+        )
+        pending = storage.pending_calendar_candidates()
+        assert len(pending) == 1
+        assert pending[0].suggested_calendar_id == "school-id"
+        assert storage.mark_calendar_candidate(
+            pending[0].id, "created", external_event_id="event-123"
+        )
+        assert storage.pending_calendar_candidates() == []

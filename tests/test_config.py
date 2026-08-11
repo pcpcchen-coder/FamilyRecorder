@@ -102,6 +102,29 @@ def test_load_config_accepts_direction_calibration(tmp_path: Path) -> None:
     assert config.direction.front_angle_degrees == 183.5
 
 
+def test_load_config_accepts_google_calendar_member_mappings(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """calendar:
+  enabled: true
+  provider: google
+  default_calendar_id: family-id
+  default_calendar_name: Family
+  calendar_names: {school-id: School, family-id: Family}
+  member_calendar_ids:
+    陳樂融: [school-id, family-id]
+  member_default_calendar_ids:
+    陳樂融: school-id
+""",
+        encoding="utf-8",
+    )
+    config = load_config(config_file)
+    assert config.calendar.provider == "google"
+    assert config.calendar.member_calendar_ids["陳樂融"] == ("school-id", "family-id")
+    assert config.calendar.calendar_names["school-id"] == "School"
+    assert config.calendar.member_default_calendar_ids["陳樂融"] == "school-id"
+
+
 def test_load_config_rejects_invalid_direction_interval(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     config_file.write_text("direction:\n  sample_interval_seconds: 0.01\n", encoding="utf-8")

@@ -66,6 +66,27 @@ CREATE TABLE IF NOT EXISTS summaries (
     model TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS calendar_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    summary_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    all_day INTEGER NOT NULL CHECK(all_day IN (0, 1)),
+    notes TEXT NOT NULL DEFAULT '',
+    member_name TEXT NOT NULL DEFAULT '',
+    suggested_calendar_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('pending', 'created', 'dismissed', 'failed')),
+    external_event_id TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(summary_date, title, starts_at, member_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_candidates_status_start
+ON calendar_candidates(status, starts_at);
 """
 
 
@@ -73,6 +94,20 @@ CREATE TABLE IF NOT EXISTS summaries (
 class CleanupResult:
     removed_files: int
     removed_bytes: int
+
+
+@dataclass(frozen=True)
+class CalendarCandidate:
+    id: int
+    summary_date: str
+    title: str
+    starts_at: str
+    ends_at: str
+    all_day: bool
+    notes: str
+    member_name: str
+    suggested_calendar_id: str
+    status: str
 
 
 class Storage:
@@ -282,6 +317,94 @@ class Storage:
                     datetime.now().astimezone().isoformat(),
                 ),
             )
+
+    def replace_pending_calendar_candidates(
+        self, target_date: date, candidates: list[dict[str, object]]
+    ) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM calendar_candidates WHERE summary_date = ? AND status = 'pending'",
+                (target_date.isoformat(),),
+            )
+            self.connection.executemany(
+                """
+                INSERT OR IGNORE INTO calendar_candidates (
+                    summary_date, title, starts_at, ends_at, all_day, notes,
+                    member_name, suggested_calendar_id, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                [
+                    (
+                        target_date.isoformat(),
+                        str(candidate["title"]),
+                        str(candidate["starts_at"]),
+                        str(candidate["ends_at"]),
+                        int(bool(candidate["all_day"])),
+                        str(candidate.get("notes", "")),
+                        str(candidate.get("member_name", "")),
+                        str(candidate.get("suggested_calendar_id", "")),
+                        now,
+                        now,
+                    )
+                    for candidate in candidates
+                ],
+            )
+
+    def pending_calendar_candidates(self, limit: int = 50) -> list[CalendarCandidate]:
+        rows = self.connection.execute(
+            """
+            SELECT id, summary_date, title, starts_at, ends_at, all_day, notes,
+                   member_name, suggested_calendar_id, status
+            FROM calendar_candidates
+            WHERE status = 'pending'
+            ORDER BY starts_at, id
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            CalendarCandidate(
+                id=int(row[0]),
+                summary_date=str(row[1]),
+                title=str(row[2]),
+                starts_at=str(row[3]),
+                ends_at=str(row[4]),
+                all_day=bool(row[5]),
+                notes=str(row[6]),
+                member_name=str(row[7]),
+                suggested_calendar_id=str(row[8]),
+                status=str(row[9]),
+            )
+            for row in rows
+        ]
+
+    def mark_calendar_candidate(
+        self,
+        candidate_id: int,
+        status: str,
+        *,
+        external_event_id: str = "",
+        error: str = "",
+    ) -> bool:
+        if status not in {"created", "dismissed", "failed"}:
+            raise ValueError("invalid calendar candidate status")
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                UPDATE calendar_candidates
+                SET status = ?, external_event_id = ?, error = ?, updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (
+                    status,
+                    external_event_id,
+                    error,
+                    datetime.now().astimezone().isoformat(),
+                    candidate_id,
+                ),
+            )
+        return cursor.rowcount == 1
 
     def cleanup_audio(self, now: datetime | None = None) -> CleanupResult:
         now = now or datetime.now().astimezone()

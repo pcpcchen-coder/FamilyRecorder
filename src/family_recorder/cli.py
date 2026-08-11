@@ -106,6 +106,37 @@ def _parser() -> argparse.ArgumentParser:
     )
     probe_direction.add_argument("--seconds", type=float, default=2.0)
 
+    calendar_enabled = commands.add_parser(
+        "set-calendar-enabled", help="Enable or pause Google Calendar candidate extraction"
+    )
+    calendar_enabled.add_argument("--enabled", choices=("true", "false"), required=True)
+    calendar_default = commands.add_parser(
+        "set-calendar-default", help="Select the default writable Google Calendar"
+    )
+    calendar_default.add_argument("--calendar-id", required=True)
+    calendar_default.add_argument("--calendar-name", required=True)
+    member_calendar = commands.add_parser(
+        "set-member-calendar", help="Assign or unassign a calendar for one household member"
+    )
+    member_calendar.add_argument("--member", required=True)
+    member_calendar.add_argument("--calendar-id", required=True)
+    member_calendar.add_argument("--calendar-name", default="")
+    member_calendar.add_argument("--enabled", choices=("true", "false"), required=True)
+    member_calendar_default = commands.add_parser(
+        "set-member-calendar-default", help="Select one assigned default calendar for a member"
+    )
+    member_calendar_default.add_argument("--member", required=True)
+    member_calendar_default.add_argument("--calendar-id", required=True)
+    calendar_created = commands.add_parser(
+        "calendar-event-created", help="Mark a confirmed calendar candidate as created"
+    )
+    calendar_created.add_argument("--id", type=int, required=True)
+    calendar_created.add_argument("--external-id", default="")
+    calendar_dismissed = commands.add_parser(
+        "dismiss-calendar-event", help="Dismiss a pending calendar candidate"
+    )
+    calendar_dismissed.add_argument("--id", type=int, required=True)
+
     placement = commands.add_parser("placement-test", help="Compare microphone positions")
     placement.add_argument("--positions", nargs="+", default=["A", "B", "C"])
     placement.add_argument("--seconds", type=int)
@@ -186,6 +217,21 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
     today = date.today()
     data_dir = config.storage.data_dir
     profile_store = SpeakerProfileStore(data_dir)
+    with Storage(config.storage) as storage:
+        pending_calendar_events = [
+            {
+                "id": candidate.id,
+                "summary_date": candidate.summary_date,
+                "title": candidate.title,
+                "starts_at": candidate.starts_at,
+                "ends_at": candidate.ends_at,
+                "all_day": candidate.all_day,
+                "notes": candidate.notes,
+                "member_name": candidate.member_name,
+                "suggested_calendar_id": candidate.suggested_calendar_id,
+            }
+            for candidate in storage.pending_calendar_candidates()
+        ]
     return {
         "paused": pause_state.paused,
         "pause_label": pause_state.label,
@@ -213,6 +259,17 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "speaker_profiles_dir": str(profile_store.directory),
         "direction_enabled": config.direction.enabled,
         "direction_front_angle_degrees": config.direction.front_angle_degrees,
+        "calendar_enabled": config.calendar.enabled,
+        "calendar_provider": config.calendar.provider,
+        "calendar_default_id": config.calendar.default_calendar_id,
+        "calendar_default_name": config.calendar.default_calendar_name,
+        "calendar_names": config.calendar.calendar_names,
+        "calendar_member_ids": {
+            member: list(calendar_ids)
+            for member, calendar_ids in config.calendar.member_calendar_ids.items()
+        },
+        "calendar_member_default_ids": config.calendar.member_default_calendar_ids,
+        "calendar_pending_events": pending_calendar_events,
     }
 
 
@@ -342,6 +399,92 @@ def main(argv: list[str] | None = None) -> int:
             enabled = args.enabled == "true"
             update_yaml_value(args.config.expanduser().resolve(), "direction", "enabled", enabled)
             print("方向判斷已開啟" if enabled else "方向判斷已關閉")
+            return 0
+        if args.command == "set-calendar-enabled":
+            enabled = args.enabled == "true"
+            if enabled and not config.calendar.default_calendar_id:
+                raise ValueError("請先選擇預設 Google Calendar")
+            update_yaml_value(args.config.expanduser().resolve(), "calendar", "enabled", enabled)
+            print("Google Calendar 候選事件已開啟" if enabled else "Google Calendar 候選事件已暫停")
+            return 0
+        if args.command == "set-calendar-default":
+            calendar_id = args.calendar_id.strip()
+            calendar_name = args.calendar_name.strip()
+            if not calendar_id or not calendar_name:
+                raise ValueError("Google Calendar ID 與名稱不可空白")
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "calendar", "provider", "google")
+            update_yaml_value(config_path, "calendar", "default_calendar_id", calendar_id)
+            update_yaml_value(config_path, "calendar", "default_calendar_name", calendar_name)
+            calendar_names = dict(config.calendar.calendar_names)
+            calendar_names[calendar_id] = calendar_name
+            update_yaml_value(config_path, "calendar", "calendar_names", calendar_names)
+            update_yaml_value(config_path, "calendar", "enabled", True)
+            print(f"預設 Google Calendar：{calendar_name}")
+            return 0
+        if args.command == "set-member-calendar":
+            if args.member not in config.speakers.members:
+                raise ValueError("找不到這位家庭成員")
+            calendar_id = args.calendar_id.strip()
+            if not calendar_id:
+                raise ValueError("Calendar ID 不可空白")
+            mappings = {
+                member: list(calendar_ids)
+                for member, calendar_ids in config.calendar.member_calendar_ids.items()
+            }
+            assigned = mappings.setdefault(args.member, [])
+            enabled = args.enabled == "true"
+            if enabled and calendar_id not in assigned:
+                assigned.append(calendar_id)
+            if not enabled and calendar_id in assigned:
+                assigned.remove(calendar_id)
+            if not assigned:
+                mappings.pop(args.member, None)
+            defaults = dict(config.calendar.member_default_calendar_ids)
+            calendar_names = dict(config.calendar.calendar_names)
+            if args.calendar_name.strip():
+                calendar_names[calendar_id] = args.calendar_name.strip()
+            if enabled and args.member not in defaults:
+                defaults[args.member] = calendar_id
+            if not enabled and defaults.get(args.member) == calendar_id:
+                if assigned:
+                    defaults[args.member] = assigned[0]
+                else:
+                    defaults.pop(args.member, None)
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "calendar", "member_calendar_ids", mappings)
+            update_yaml_value(config_path, "calendar", "member_default_calendar_ids", defaults)
+            update_yaml_value(config_path, "calendar", "calendar_names", calendar_names)
+            print("家庭成員日曆對應已更新")
+            return 0
+        if args.command == "set-member-calendar-default":
+            assigned = config.calendar.member_calendar_ids.get(args.member, ())
+            if args.calendar_id not in assigned:
+                raise ValueError("請先把這個日曆指派給該家庭成員")
+            defaults = dict(config.calendar.member_default_calendar_ids)
+            defaults[args.member] = args.calendar_id
+            update_yaml_value(
+                args.config.expanduser().resolve(),
+                "calendar",
+                "member_default_calendar_ids",
+                defaults,
+            )
+            print("家庭成員預設日曆已更新")
+            return 0
+        if args.command in {"calendar-event-created", "dismiss-calendar-event"}:
+            with Storage(config.storage) as storage:
+                updated = storage.mark_calendar_candidate(
+                    args.id,
+                    "created" if args.command == "calendar-event-created" else "dismissed",
+                    external_event_id=(
+                        args.external_id if args.command == "calendar-event-created" else ""
+                    ),
+                )
+            if not updated:
+                raise ValueError("找不到待確認的行事曆事件")
+            print(
+                "行事曆事件已建立" if args.command == "calendar-event-created" else "候選事件已略過"
+            )
             return 0
         if args.command in {"calibrate-direction", "probe-direction"}:
             if not 1 <= args.seconds <= 15:

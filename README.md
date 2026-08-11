@@ -41,6 +41,7 @@ XVF3800 / XMOS
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - 透過 XVF3800 獨立 USB 控制介面同步讀取 DoA（Direction of Arrival）；將 Whisper 的數秒級時間片段分別配對音色人別與方向，逐字稿及每日摘要同時保留兩種線索。
 - 選單列可開關方向判斷、測試目前方向，並讓使用者站在指定位置說話，把該方向一鍵校準為房間的 `0° 正前方`。
+- Google Calendar 為預設行事曆 provider：每位家庭成員可綁定多個日曆並指定預設；AI 只建立待確認候選事件，使用者確認後才透過 macOS 行事曆帳號寫入 Google Calendar。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
 XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角不是 WAV 內的額外聲道，而是另外讀取 `DOA_VALUE`／波束控制資料；Seeed 官方工具也把 Auto selected beam 定義為 LED 指示所用的方向。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
@@ -197,6 +198,11 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `direction.min_speech_samples` | `3` | 一個文字時間片段至少需要幾個帶語音旗標的方向樣本 |
 | `direction.cluster_tolerance_degrees` | `35` | 相近方向合併容許角度 |
 | `direction.multiple_direction_min_ratio` | `0.25` | 第二方向至少佔多少語音樣本才標示多方向 |
+| `calendar.provider` | `google` | 預設且目前支援的行事曆 provider |
+| `calendar.enabled` | `false` | 選定預設 Google Calendar 後由選單自動開啟候選事件 |
+| `calendar.default_calendar_id` | 空字串 | 全家事件或無法判斷成員時使用的預設日曆 |
+| `calendar.member_calendar_ids` | `{}` | 每位家庭成員可使用的多個 Google Calendar；由選單設定 |
+| `calendar.member_default_calendar_ids` | `{}` | 每位成員在 AI 無法精確分類時的回退日曆 |
 | `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
 | `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
@@ -288,6 +294,18 @@ codex login status
 
 請注意，逐字稿文字本身可能包含敏感內容、近似人別姓名與家庭事件；啟用前應先檢視 prompt、ChatGPT 資料設定與家庭共識。FamilyRecorder 不會把聲音、聲音特徵、SQLite 或本機檔案路徑附加到摘要請求。
 
+## Google Calendar 候選事件
+
+FamilyRecorder 預設支援 Google Calendar，但不另存 Google 密碼或 OAuth token。它使用已加入 macOS「Internet 帳號」並在「行事曆」App 中同步的 Google 帳號；第一次使用會由 macOS 詢問 `FamilyRecorder` 行事曆權限。
+
+1. 若 Mac 尚未加入 Google 帳號，先到「系統設定 → Internet 帳號 → 加入帳號 → Google」，並開啟「行事曆」。
+2. 點 FamilyRecorder 選單 →「Google Calendar」→「連接／選擇預設 Google Calendar…」。
+3. 在「家庭成員日曆對應」中，為每位成員勾選一個或多個可用日曆，再從下方指定該成員的預設日曆。
+4. 每日摘要或「立即整理今天」完成後，AI 只會針對逐字稿中日期與時間足夠明確的未來事件建立候選項目；它可依成員及日曆顯示名稱建議路由，無法確定時回退到成員預設或全家預設。
+5. 從「待確認事件」檢視標題、時間、成員與目的日曆，按「確認建立」後才真正寫入；也可改選其他 Google Calendar 或直接略過。
+
+候選事件存在 SQLite `calendar_candidates` 表，狀態為 `pending`、`created`、`dismissed` 或 `failed`。重新執行同一天摘要只會刷新尚未處理的候選項目，不會重建已確認或已略過的同一事件。啟用這項功能後，送往 ChatGPT 的純文字指示會額外包含家庭成員姓名、可選日曆顯示名稱及本機 EventKit ID，讓 AI 建議路由；Google Calendar 的實際內容不會被讀取或上傳。
+
 ## 安裝常駐工作
 
 務必先通過上面的單次錄音驗收，且已執行 `install_menubar.sh`，再安裝 listener：
@@ -324,6 +342,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 在「更換模型 → ChatGPT 摘要」以多行編輯器自訂每日摘要 Prompt，或一鍵恢復內建格式；變更只套用到之後產生或重新執行的摘要。
 - 在「常用字詞校正」逐行維護姓名與術語，例如 `陳樂融`；儲存後會重啟 listener 套用。
 - 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
+- 在「Google Calendar」選擇全家預設日曆、為每位成員綁定多個日曆，並逐筆確認 AI 候選事件。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
 - 使用「解除安裝 FamilyRecorder…」打開獨立解除安裝器；主選單被關閉後清理仍會繼續。
 
@@ -352,7 +371,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 原始 WAV、逐字稿、每日摘要與 SQLite。
 - 人聲特徵、擺位測試、暫停狀態與 logs。
 - FamilyRecorder 設定及其安裝備份。
-- 選單列 App 的 FamilyRecorder 麥克風權限紀錄。
+- 選單列 App 的 FamilyRecorder 麥克風與行事曆權限紀錄。
 
 兩種模式都不會登出或移除 ChatGPT／Codex，不會刪除 Homebrew、Python、Git、CMake、PortAudio 等可能由其他程式共用的工具，也不會刪除 GitHub repo、本機原始碼 checkout 或另外下載的 DMG。
 
@@ -531,6 +550,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 22. 校準正前方後，從正前方、左側與右側各說一句，逐字稿分別接近 `0°`、`90°`、`270°`，SQLite 同步保存方向摘要與逐筆樣本。
 23. 同一 30 秒內從兩個不同方向輪流說話時，Whisper 時間片段各自取得相符方向；同時或快速交疊時保守標示多方向／不確定。
 24. 每日摘要包含「對話方向與人別線索」，重要項目保留來源方向；沒有音色姓名時不會只靠方向指定家人。
+25. Google Calendar 未確認前不建立任何事件；為成員綁定多個日曆後，AI 建議路由可回退到成員／全家預設，確認建立與略過都會更新 SQLite 狀態。
 
 ## 常見問題
 
