@@ -110,6 +110,7 @@ struct RecorderStatus: Decodable {
     let directionEnabled: Bool
     let directionFrontAngleDegrees: Double
     let calendarEnabled: Bool
+    let calendarAutoCreate: Bool
     let calendarProvider: String
     let calendarDefaultID: String
     let calendarDefaultName: String
@@ -142,6 +143,7 @@ struct RecorderStatus: Decodable {
         case directionEnabled = "direction_enabled"
         case directionFrontAngleDegrees = "direction_front_angle_degrees"
         case calendarEnabled = "calendar_enabled"
+        case calendarAutoCreate = "calendar_auto_create"
         case calendarProvider = "calendar_provider"
         case calendarDefaultID = "calendar_default_id"
         case calendarDefaultName = "calendar_default_name"
@@ -169,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var enrollmentStartedAt: Date?
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
+    private var autoCreatingCalendarEventIDs: Set<Int> = []
 
     init(programPath: String, configPath: String, uninstallerPath: String) {
         self.programPath = programPath
@@ -356,6 +359,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let tooltip = status.listenerRunning ? status.pauseLabel : "錄音服務未執行"
             updateStatusIcon(symbol: symbol, tooltip: tooltip)
+            if status.calendarAutoCreate {
+                autoCreatePendingCalendarEvents(status)
+            } else {
+                autoCreatingCalendarEventIDs.removeAll()
+            }
             if rebuildMenu {
                 buildMenu(status)
             }
@@ -651,6 +659,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
             )
         }
+        let autoCreateItem = item(
+            status.calendarAutoCreate
+                ? "摘要後自動加入（已開啟）"
+                : "摘要後自動加入…",
+            action: #selector(toggleCalendarAutoCreate),
+            enabled: status.calendarEnabled && !status.calendarDefaultID.isEmpty
+        )
+        autoCreateItem.state = status.calendarAutoCreate ? .on : .off
+        calendarMenu.addItem(autoCreateItem)
 
         let mappingItem = item("家庭成員日曆對應")
         let mappingMenu = NSMenu()
@@ -742,7 +759,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pendingItem.submenu = pendingMenu
         calendarMenu.addItem(pendingItem)
         calendarMenu.addItem(.separator())
-        calendarMenu.addItem(item("AI 只建立候選項目；確認後才寫入日曆", enabled: false))
+        calendarMenu.addItem(
+            item(
+                status.calendarAutoCreate
+                    ? "已一次同意；摘要事件會自動寫入日曆"
+                    : "目前為逐筆確認模式",
+                enabled: false
+            )
+        )
         calendarItem.submenu = calendarMenu
         return calendarItem
     }
@@ -1002,6 +1026,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
+    @objc private func toggleCalendarAutoCreate() {
+        guard let status = currentStatus else { return }
+        if status.calendarAutoCreate {
+            runSimpleAction(
+                ["set-calendar-auto-create", "--enabled", "false"],
+                successTitle: "已恢復逐筆確認模式"
+            )
+            return
+        }
+        requestCalendarAccess { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.showCalendarPermissionAlert()
+                return
+            }
+            guard !self.availableGoogleCalendars.isEmpty else {
+                self.showMissingGoogleCalendarAlert()
+                return
+            }
+            let pendingCount = status.calendarPendingEvents.count
+            let pendingText = pendingCount == 0
+                ? "目前沒有待確認事件。"
+                : "目前已有 \(pendingCount) 個待確認事件；開啟後也會立即自動加入。"
+            let alert = NSAlert()
+            alert.messageText = "摘要後自動加入 Google Calendar？"
+            alert.informativeText =
+                "這是一次性同意。今後 ChatGPT 從摘要擷取的事件，會自動寫入成員或全家預設日曆，不再逐筆詢問。\n\n\(pendingText)\n\n語音辨識與 AI 判斷仍可能出錯；你可以隨時回到這裡關閉。"
+            alert.addButton(withTitle: "同意並開啟")
+            alert.addButton(withTitle: "取消")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            self.runSimpleAction(
+                ["set-calendar-auto-create", "--enabled", "true"],
+                successTitle: ""
+            )
+        }
+    }
+
     @objc private func toggleMemberCalendar(_ sender: NSMenuItem) {
         guard let choice = sender.representedObject as? MemberCalendarChoice else { return }
         let assigned = currentStatus?.calendarMemberIDs[choice.member] ?? []
@@ -1077,6 +1139,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return availableGoogleCalendars.first { $0.calendarIdentifier == calendarID }
     }
 
+    private func hasCalendarWriteAccess() -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if #available(macOS 14.0, *) {
+            return status == .fullAccess
+        } else {
+            return status == .authorized
+        }
+    }
+
+    private func calendarCandidateMarker(_ candidate: PendingCalendarEvent) -> String {
+        "FamilyRecorder candidate \(candidate.summaryDate)#\(candidate.id)|\(candidate.startsAt)|\(candidate.title)"
+    }
+
+    private func existingCalendarEventID(
+        for candidate: PendingCalendarEvent,
+        startDate: Date,
+        endDate: Date
+    ) -> String? {
+        let marker = calendarCandidateMarker(candidate)
+        let margin: TimeInterval = 86_400
+        let predicate = eventStore.predicateForEvents(
+            withStart: startDate.addingTimeInterval(-margin),
+            end: endDate.addingTimeInterval(margin),
+            calendars: nil
+        )
+        return eventStore.events(matching: predicate).first {
+            $0.notes?.contains(marker) == true
+        }?.eventIdentifier
+    }
+
+    private func autoCreatePendingCalendarEvents(_ status: RecorderStatus) {
+        guard status.calendarEnabled, status.calendarAutoCreate, hasCalendarWriteAccess() else {
+            return
+        }
+        if availableGoogleCalendars.isEmpty {
+            refreshGoogleCalendars()
+        }
+        for candidate in status.calendarPendingEvents
+        where !autoCreatingCalendarEventIDs.contains(candidate.id) {
+            guard let calendar = suggestedCalendar(for: candidate) else { continue }
+            autoCreatingCalendarEventIDs.insert(candidate.id)
+            createCalendarEvent(candidate, in: calendar, requiresConfirmation: false)
+        }
+    }
+
     @objc private func confirmCalendarEvent(_ sender: NSMenuItem) {
         guard let event = pendingCalendarEvent(sender) else { return }
         requestCalendarAccess { [weak self] granted in
@@ -1088,7 +1195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let calendar = self.suggestedCalendar(for: event)
                 ?? self.chooseCalendar(title: "選擇要加入的 Google Calendar")
             else { return }
-            self.createCalendarEvent(event, in: calendar)
+            self.createCalendarEvent(event, in: calendar, requiresConfirmation: true)
         }
     }
 
@@ -1103,24 +1210,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let calendar = self.chooseCalendar(title: "選擇要加入的 Google Calendar") else {
                 return
             }
-            self.createCalendarEvent(event, in: calendar)
+            self.createCalendarEvent(event, in: calendar, requiresConfirmation: true)
         }
     }
 
-    private func createCalendarEvent(_ candidate: PendingCalendarEvent, in calendar: EKCalendar) {
+    private func createCalendarEvent(
+        _ candidate: PendingCalendarEvent,
+        in calendar: EKCalendar,
+        requiresConfirmation: Bool
+    ) {
         guard let (startDate, endDate) = dates(for: candidate) else {
-            showAlert(title: "事件時間格式錯誤", message: "請略過這個候選事件並手動建立。")
+            showAlert(
+                title: requiresConfirmation ? "事件時間格式錯誤" : "自動加入行事曆失敗",
+                message: "「\(candidate.title)」的時間格式不正確，已保留在待確認事件。"
+            )
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "加入 Google Calendar？"
-        let member = candidate.memberName.isEmpty ? "未指定" : candidate.memberName
-        alert.informativeText =
-            "事件：\(candidate.title)\n時間：\(calendarEventTime(candidate))\n成員：\(member)\n日曆：\(calendarDisplayName(calendar))\n\n只有按下確認後才會真正建立。"
-        alert.addButton(withTitle: "確認建立")
-        alert.addButton(withTitle: "取消")
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if requiresConfirmation {
+            let alert = NSAlert()
+            alert.messageText = "加入 Google Calendar？"
+            let member = candidate.memberName.isEmpty ? "未指定" : candidate.memberName
+            alert.informativeText =
+                "事件：\(candidate.title)\n時間：\(calendarEventTime(candidate))\n成員：\(member)\n日曆：\(calendarDisplayName(calendar))\n\n只有按下確認後才會真正建立。"
+            alert.addButton(withTitle: "確認建立")
+            alert.addButton(withTitle: "取消")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        if let existingID = existingCalendarEventID(
+            for: candidate, startDate: startDate, endDate: endDate
+        ) {
+            markCalendarCandidateCreated(
+                candidate,
+                externalID: existingID,
+                calendar: calendar,
+                automatic: !requiresConfirmation
+            )
+            return
+        }
 
         let event = EKEvent(eventStore: eventStore)
         event.calendar = calendar
@@ -1128,26 +1255,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         event.startDate = startDate
         event.endDate = endDate
         event.isAllDay = candidate.allDay
-        let sourceNote = "由 FamilyRecorder 每日摘要產生，並經使用者確認。"
-        event.notes = candidate.notes.isEmpty ? sourceNote : "\(sourceNote)\n\(candidate.notes)"
+        let sourceNote = requiresConfirmation
+            ? "由 FamilyRecorder 每日摘要產生，並經使用者確認。"
+            : "由 FamilyRecorder 每日摘要自動建立；使用者已事先開啟自動加入。"
+        let marker = calendarCandidateMarker(candidate)
+        let provenance = "\(sourceNote)\n\(marker)"
+        event.notes = candidate.notes.isEmpty
+            ? provenance
+            : "\(provenance)\n\(candidate.notes)"
         do {
             try eventStore.save(event, span: .thisEvent, commit: true)
         } catch {
-            showAlert(title: "無法建立行事曆事件", message: error.localizedDescription)
+            showAlert(
+                title: requiresConfirmation ? "無法建立行事曆事件" : "自動加入行事曆失敗",
+                message: "「\(candidate.title)」：\(error.localizedDescription)\n事件仍保留在待確認清單。"
+            )
             return
         }
+        markCalendarCandidateCreated(
+            candidate,
+            externalID: event.eventIdentifier ?? "",
+            calendar: calendar,
+            automatic: !requiresConfirmation
+        )
+    }
+
+    private func markCalendarCandidateCreated(
+        _ candidate: PendingCalendarEvent,
+        externalID: String,
+        calendar: EKCalendar,
+        automatic: Bool
+    ) {
         runRecorderAsync(
             [
                 "calendar-event-created",
                 "--id", String(candidate.id),
-                "--external-id", event.eventIdentifier ?? "",
+                "--external-id", externalID,
             ]
         ) { [weak self] status, output in
-            self?.refreshStatus(rebuildMenu: true)
-            self?.showAlert(
-                title: status == 0 ? "已加入 Google Calendar" : "事件已建立，但狀態更新失敗",
-                message: status == 0 ? self?.calendarDisplayName(calendar) ?? output : output
-            )
+            guard let self else { return }
+            if status == 0 {
+                self.autoCreatingCalendarEventIDs.remove(candidate.id)
+            }
+            self.refreshStatus(rebuildMenu: true)
+            if !automatic || status != 0 {
+                self.showAlert(
+                    title: status == 0 ? "已加入 Google Calendar" : "事件已建立，但狀態更新失敗",
+                    message: status == 0 ? self.calendarDisplayName(calendar) : output
+                )
+            }
         }
     }
 

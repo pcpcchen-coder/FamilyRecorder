@@ -110,6 +110,11 @@ def _parser() -> argparse.ArgumentParser:
         "set-calendar-enabled", help="Enable or pause Google Calendar candidate extraction"
     )
     calendar_enabled.add_argument("--enabled", choices=("true", "false"), required=True)
+    calendar_auto_create = commands.add_parser(
+        "set-calendar-auto-create",
+        help="Automatically create extracted events after one-time user opt-in",
+    )
+    calendar_auto_create.add_argument("--enabled", choices=("true", "false"), required=True)
     calendar_default = commands.add_parser(
         "set-calendar-default", help="Select the default writable Google Calendar"
     )
@@ -260,6 +265,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "direction_enabled": config.direction.enabled,
         "direction_front_angle_degrees": config.direction.front_angle_degrees,
         "calendar_enabled": config.calendar.enabled,
+        "calendar_auto_create": config.calendar.auto_create,
         "calendar_provider": config.calendar.provider,
         "calendar_default_id": config.calendar.default_calendar_id,
         "calendar_default_name": config.calendar.default_calendar_name,
@@ -406,6 +412,17 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("請先選擇預設 Google Calendar")
             update_yaml_value(args.config.expanduser().resolve(), "calendar", "enabled", enabled)
             print("Google Calendar 候選事件已開啟" if enabled else "Google Calendar 候選事件已暫停")
+            return 0
+        if args.command == "set-calendar-auto-create":
+            enabled = args.enabled == "true"
+            if enabled and not config.calendar.enabled:
+                raise ValueError("請先開啟 Google Calendar 候選事件")
+            if enabled and not config.calendar.default_calendar_id:
+                raise ValueError("請先選擇預設 Google Calendar")
+            update_yaml_value(
+                args.config.expanduser().resolve(), "calendar", "auto_create", enabled
+            )
+            print("摘要後將自動加入行事曆" if enabled else "已恢復逐筆確認模式")
             return 0
         if args.command == "set-calendar-default":
             calendar_id = args.calendar_id.strip()

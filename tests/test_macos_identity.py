@@ -79,3 +79,12 @@ def test_menu_installer_does_not_block_on_microphone_authorization() -> None:
 
     assert "--authorize-microphone" not in script
     assert 'com.familyrecorder.listener.plist"' in script
+
+
+def test_calendar_auto_create_requires_one_time_opt_in_and_deduplicates() -> None:
+    source = (ROOT / "menubar" / "FamilyRecorderMenuBar.swift").read_text(encoding="utf-8")
+
+    assert 'alert.addButton(withTitle: "同意並開啟")' in source
+    assert '"set-calendar-auto-create", "--enabled", "true"' in source
+    assert "existingCalendarEventID" in source
+    assert "calendarCandidateMarker" in source

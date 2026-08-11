@@ -192,6 +192,34 @@ def test_calendar_date_without_time_becomes_all_day_candidate(tmp_path: Path) ->
     assert pending[0].ends_at == "2026-08-13"
 
 
+def test_auto_create_mode_is_visible_in_generated_summary(tmp_path: Path) -> None:
+    target = date(2026, 8, 11)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text("明天考試。", encoding="utf-8")
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        calendar=CalendarConfig(enabled=True, auto_create=True, default_calendar_id="family-id"),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    result = DailySummaryRunner(
+        config,
+        command_runner=FakeCommandRunner(
+            stdout=[
+                "明天考試。",
+                '{"events":[{"title":"考試","start":"2026-08-12",'
+                '"end":"2026-08-13","all_day":true,"member":"",'
+                '"calendar_id":"","notes":"明天"}]}',
+            ]
+        ),
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    summary = result.read_text(encoding="utf-8")
+    assert "選單列程式會自動加入" in summary
+    assert "待確認" not in summary
+
+
 def test_calendar_extraction_failure_preserves_existing_pending_candidate(tmp_path: Path) -> None:
     target = date(2026, 8, 11)
     transcript_dir = tmp_path / "transcripts"

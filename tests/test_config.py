@@ -107,6 +107,7 @@ def test_load_config_accepts_google_calendar_member_mappings(tmp_path: Path) -> 
     config_file.write_text(
         """calendar:
   enabled: true
+  auto_create: true
   provider: google
   default_calendar_id: family-id
   default_calendar_name: Family
@@ -120,6 +121,7 @@ def test_load_config_accepts_google_calendar_member_mappings(tmp_path: Path) -> 
     )
     config = load_config(config_file)
     assert config.calendar.provider == "google"
+    assert config.calendar.auto_create is True
     assert config.calendar.member_calendar_ids["陳樂融"] == ("school-id", "family-id")
     assert config.calendar.calendar_names["school-id"] == "School"
     assert config.calendar.member_default_calendar_ids["陳樂融"] == "school-id"

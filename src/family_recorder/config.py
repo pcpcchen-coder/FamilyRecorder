@@ -72,6 +72,7 @@ class DirectionConfig:
 @dataclass(frozen=True)
 class CalendarConfig:
     enabled: bool = False
+    auto_create: bool = False
     provider: str = "google"
     default_calendar_id: str = ""
     default_calendar_name: str = ""

@@ -488,10 +488,17 @@ class DailySummaryRunner:
                 else:
                     storage.replace_pending_calendar_candidates(target_date, calendar_candidates)
                     if calendar_candidates:
-                        summary += (
-                            "\n\n> FamilyRecorder 已整理出 "
-                            f"{len(calendar_candidates)} 個待確認的 Google Calendar 事件。"
-                        )
+                        if self.config.calendar.auto_create:
+                            summary += (
+                                "\n\n> FamilyRecorder 已整理出 "
+                                f"{len(calendar_candidates)} 個 Google Calendar 事件；"
+                                "選單列程式會自動加入已設定的日曆。"
+                            )
+                        else:
+                            summary += (
+                                "\n\n> FamilyRecorder 已整理出 "
+                                f"{len(calendar_candidates)} 個待確認的 Google Calendar 事件。"
+                            )
                     else:
                         summary += (
                             "\n\n> FamilyRecorder 本次沒有找到日期足夠明確的 "

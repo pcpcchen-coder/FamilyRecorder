@@ -41,7 +41,7 @@ XVF3800 / XMOS
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
 - 透過 XVF3800 獨立 USB 控制介面同步讀取 DoA（Direction of Arrival）；將 Whisper 的數秒級時間片段分別配對音色人別與方向，逐字稿及每日摘要同時保留兩種線索。
 - 選單列可開關方向判斷、測試目前方向，並讓使用者站在指定位置說話，把該方向一鍵校準為房間的 `0° 正前方`。
-- Google Calendar 為預設行事曆 provider：每位家庭成員可綁定多個日曆並指定預設；AI 只建立待確認候選事件，使用者確認後才透過 macOS 行事曆帳號寫入 Google Calendar。
+- Google Calendar 為預設行事曆 provider：每位家庭成員可綁定多個日曆並指定預設；可選擇逐筆確認，或一次同意後讓每次摘要自動加入。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
 XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角不是 WAV 內的額外聲道，而是另外讀取 `DOA_VALUE`／波束控制資料；Seeed 官方工具也把 Auto selected beam 定義為 LED 指示所用的方向。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 datasheet](https://www.xmos.com/documentation/XM-014888-PC/pdf/xvf3800_datasheet_v3.2.1.pdf)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
@@ -200,6 +200,7 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `direction.multiple_direction_min_ratio` | `0.25` | 第二方向至少佔多少語音樣本才標示多方向 |
 | `calendar.provider` | `google` | 預設且目前支援的行事曆 provider |
 | `calendar.enabled` | `false` | 選定預設 Google Calendar 後由選單自動開啟候選事件 |
+| `calendar.auto_create` | `false` | 一次同意後，讓選單列程式自動把摘要候選寫入日曆；可隨時關閉 |
 | `calendar.default_calendar_id` | 空字串 | 全家事件或無法判斷成員時使用的預設日曆 |
 | `calendar.member_calendar_ids` | `{}` | 每位家庭成員可使用的多個 Google Calendar；由選單設定 |
 | `calendar.member_default_calendar_ids` | `{}` | 每位成員在 AI 無法精確分類時的回退日曆 |
@@ -302,9 +303,10 @@ FamilyRecorder 預設支援 Google Calendar，但不另存 Google 密碼或 OAut
 2. 點 FamilyRecorder 選單 →「Google Calendar」→「連接／選擇預設 Google Calendar…」。
 3. 在「家庭成員日曆對應」中，為每位成員勾選一個或多個可用日曆，再從下方指定該成員的預設日曆。
 4. 每日摘要或「立即整理今天」會先產生人類閱讀的摘要，再由 ChatGPT 執行一次具有固定 JSON 結構的候選事件擷取；日期明確但沒有時間（例如「明天考試」）會成為全天候選，日期也不明確時才略過。它可依成員及日曆顯示名稱建議路由，無法確定時回退到成員預設或全家預設。
-5. 從「待確認事件」檢視標題、時間、成員與目的日曆，按「確認建立」後才真正寫入；也可改選其他 Google Calendar 或直接略過。
+5. 預設仍是逐筆確認：從「待確認事件」檢視標題、時間、成員與目的日曆，再確認建立、改選日曆或略過。
+6. 若不想每天確認，點「摘要後自動加入…」，閱讀說明後只需按一次「同意並開啟」。現有待確認事件與往後摘要產生的事件都會自動加入；通常在摘要完成後 10 秒內完成。可隨時從同一選單關閉並恢復逐筆確認。
 
-候選事件存在 SQLite `calendar_candidates` 表，狀態為 `pending`、`created`、`dismissed` 或 `failed`。重新執行同一天摘要只會刷新尚未處理的候選項目，不會重建已確認或已略過的同一事件。若事件擷取的第二次 ChatGPT 請求失敗，摘要檔會顯示警告，且程式會保留既有待確認項目，不會因暫時性錯誤把它們清空。啟用這項功能後，送往 ChatGPT 的純文字指示會額外包含家庭成員姓名、可選日曆顯示名稱及本機 EventKit ID，讓 AI 建議路由；Google Calendar 的實際內容不會被讀取或上傳。
+候選事件存在 SQLite `calendar_candidates` 表，狀態為 `pending`、`created`、`dismissed` 或 `failed`。重新執行同一天摘要只會刷新尚未處理的候選項目，不會重建已確認或已略過的同一事件。自動模式會在 EventKit 備註寫入候選識別，服務重啟或狀態更新中斷時會先去重，避免重複建立。若事件擷取的第二次 ChatGPT 請求失敗，摘要檔會顯示警告，且程式會保留既有待確認項目，不會因暫時性錯誤把它們清空。啟用這項功能後，送往 ChatGPT 的純文字指示會額外包含家庭成員姓名、可選日曆顯示名稱及本機 EventKit ID，讓 AI 建議路由；Google Calendar 的實際內容不會被讀取或上傳。
 
 ## 安裝常駐工作
 
@@ -342,7 +344,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 在「更換模型 → ChatGPT 摘要」以多行編輯器自訂每日摘要 Prompt，或一鍵恢復內建格式；變更只套用到之後產生或重新執行的摘要。
 - 在「常用字詞校正」逐行維護姓名與術語，例如 `陳樂融`；儲存後會重啟 listener 套用。
 - 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
-- 在「Google Calendar」選擇全家預設日曆、為每位成員綁定多個日曆，並逐筆確認 AI 候選事件。
+- 在「Google Calendar」選擇全家預設日曆、為每位成員綁定多個日曆；可逐筆確認 AI 候選事件，或一次同意後自動加入。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
 - 使用「解除安裝 FamilyRecorder…」打開獨立解除安裝器；主選單被關閉後清理仍會繼續。
 
@@ -550,7 +552,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 22. 校準正前方後，從正前方、左側與右側各說一句，逐字稿分別接近 `0°`、`90°`、`270°`，SQLite 同步保存方向摘要與逐筆樣本。
 23. 同一 30 秒內從兩個不同方向輪流說話時，Whisper 時間片段各自取得相符方向；同時或快速交疊時保守標示多方向／不確定。
 24. 每日摘要包含「對話方向與人別線索」，重要項目保留來源方向；沒有音色姓名時不會只靠方向指定家人。
-25. Google Calendar 未確認前不建立任何事件；為成員綁定多個日曆後，AI 建議路由可回退到成員／全家預設，確認建立與略過都會更新 SQLite 狀態。
+25. Google Calendar 預設未確認前不建立事件；開啟 `auto_create` 必須先通過一次明確同意。成員路由可回退到成員／全家預設，自動與手動建立都更新 SQLite 狀態，重啟重試不會重複加入同一候選。
 
 ## 常見問題
 
@@ -582,7 +584,7 @@ XVF3800 的 UAC 音訊只有處理後聲道；DoA 由同一台裝置的 USB vend
 
 **摘要沒有方向資訊**：方向功能只會影響升級後新產生的逐字稿片段。先確認逐字稿標題含「方向：…」，再重新整理指定日期；0.10.0 會要求每次分段與最終摘要保留來源方向，並新增「對話方向與人別線索」。
 
-**摘要有日期／事件，但「待確認事件」是空的**：確認已升級到 0.11.1 以上，再重新執行同一天摘要。0.11.1 會在摘要完成後以獨立的結構化 ChatGPT 請求擷取行事曆候選；只有日期而沒有時間的事件會列為全天候選。摘要檔底部會明確顯示找到的候選數量、沒有找到，或擷取失敗警告。候選仍須在選單中按「確認建立」才會寫入 Google Calendar。
+**摘要有日期／事件，但「待確認事件」是空的**：確認已升級到 0.11.1 以上，再重新執行同一天摘要。新版會在摘要完成後以獨立的結構化 ChatGPT 請求擷取行事曆候選；只有日期而沒有時間的事件會列為全天候選。摘要檔底部會明確顯示找到的候選數量、沒有找到，或擷取失敗警告。0.12.0 起也可一次同意「摘要後自動加入」；此模式成功時待確認清單會很快歸零，請直接到 Google Calendar 檢查事件。
 
 **選單列沒有圖示**：重跑 `./scripts/install_menubar.sh`，再檢查 `launchctl print "gui/$UID/com.familyrecorder.menubar"` 與 `menubar.error.log`。選單的「結束」是刻意正常退出，LaunchAgent 不會立即重開；重跑安裝腳本即可。
 

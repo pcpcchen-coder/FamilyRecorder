@@ -57,9 +57,11 @@ direction:
 
 # Google Calendar is the default and currently supported calendar provider.
 # FamilyRecorder writes through the Google account already added to macOS
-# Calendar. It only creates an event after the user confirms it in the menu.
+# Calendar. The default is per-event confirmation. `auto_create` can be enabled
+# once in the menu to create future summary events without repeated prompts.
 calendar:
   enabled: false
+  auto_create: false
   provider: "google"
   default_calendar_id: ""
   default_calendar_name: ""
