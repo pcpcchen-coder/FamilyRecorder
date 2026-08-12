@@ -41,6 +41,66 @@ struct SpeakerMember: Decodable {
     }
 }
 
+struct HallucinationFilterSettings: Decodable {
+    let enabled: Bool
+    let hardwareSilenceGuardEnabled: Bool
+    let hardwareSilenceMaxRatio: Double
+    let hardwareSilenceMaxSoftwareSpeechRatio: Double
+    let hardwareSilenceMaxSNRDB: Double
+    let adaptiveNoiseEnabled: Bool
+    let noiseWindowChunks: Int
+    let noiseMinSamples: Int
+    let noiseMarginDB: Double
+    let lowFrequencyFilterEnabled: Bool
+    let lowFrequencyMinRatio: Double
+    let tonalEnergyMinRatio: Double
+    let whisperConfidenceEnabled: Bool
+    let noSpeechProbabilityMax: Double
+    let minAvgLogprob: Double
+    let lowProbabilityThreshold: Double
+    let maxLowProbabilityRatio: Double
+    let maxCompressionRatio: Double
+    let suppressNonSpeechTokens: Bool
+    let repeatFilterEnabled: Bool
+    let repeatWindowSeconds: Int
+    let maxRepetitions: Int
+    let repeatSimilarityThreshold: Double
+    let minRepeatTextChars: Int
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case hardwareSilenceGuardEnabled = "hardware_silence_guard_enabled"
+        case hardwareSilenceMaxRatio = "hardware_silence_max_ratio"
+        case hardwareSilenceMaxSoftwareSpeechRatio = "hardware_silence_max_software_speech_ratio"
+        case hardwareSilenceMaxSNRDB = "hardware_silence_max_snr_db"
+        case adaptiveNoiseEnabled = "adaptive_noise_enabled"
+        case noiseWindowChunks = "noise_window_chunks"
+        case noiseMinSamples = "noise_min_samples"
+        case noiseMarginDB = "noise_margin_db"
+        case lowFrequencyFilterEnabled = "low_frequency_filter_enabled"
+        case lowFrequencyMinRatio = "low_frequency_min_ratio"
+        case tonalEnergyMinRatio = "tonal_energy_min_ratio"
+        case whisperConfidenceEnabled = "whisper_confidence_enabled"
+        case noSpeechProbabilityMax = "no_speech_probability_max"
+        case minAvgLogprob = "min_avg_logprob"
+        case lowProbabilityThreshold = "low_probability_threshold"
+        case maxLowProbabilityRatio = "max_low_probability_ratio"
+        case maxCompressionRatio = "max_compression_ratio"
+        case suppressNonSpeechTokens = "suppress_non_speech_tokens"
+        case repeatFilterEnabled = "repeat_filter_enabled"
+        case repeatWindowSeconds = "repeat_window_seconds"
+        case maxRepetitions = "max_repetitions"
+        case repeatSimilarityThreshold = "repeat_similarity_threshold"
+        case minRepeatTextChars = "min_repeat_text_chars"
+    }
+}
+
+struct HallucinationFilterStats: Decodable {
+    let acoustic: Int
+    let transcription: Int
+    let total: Int
+}
+
 struct PendingCalendarEvent: Decodable {
     let id: Int
     let summaryDate: String
@@ -104,6 +164,9 @@ struct RecorderStatus: Decodable {
     let summaryModel: String
     let summaryPrompt: String
     let commonTerms: [String]
+    let hallucinationFilter: HallucinationFilterSettings
+    let hallucinationFilterPreset: String
+    let hallucinationFilterStats: HallucinationFilterStats
     let speakerEnabled: Bool
     let speakerMembers: [SpeakerMember]
     let speakerProfilesDir: String
@@ -137,6 +200,9 @@ struct RecorderStatus: Decodable {
         case summaryModel = "summary_model"
         case summaryPrompt = "summary_prompt"
         case commonTerms = "common_terms"
+        case hallucinationFilter = "hallucination_filter"
+        case hallucinationFilterPreset = "hallucination_filter_preset"
+        case hallucinationFilterStats = "hallucination_filter_stats"
         case speakerEnabled = "speaker_enabled"
         case speakerMembers = "speaker_members"
         case speakerProfilesDir = "speaker_profiles_dir"
@@ -435,6 +501,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
         )
         menu.addItem(item("常用字詞：\(status.commonTerms.count) 個", enabled: false))
+        menu.addItem(
+            item(
+                status.hallucinationFilter.enabled
+                    ? "防幻覺：\(hallucinationPresetName(status.hallucinationFilterPreset)) · 今日攔截 \(status.hallucinationFilterStats.total) 段"
+                    : "防幻覺：已關閉",
+                enabled: false
+            )
+        )
         menu.addItem(.separator())
 
         if status.paused {
@@ -551,6 +625,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         termsItem.submenu = termsMenu
         menu.addItem(termsItem)
 
+        menu.addItem(buildHallucinationFilterMenu(status))
+
         let familyItem = item("家庭成員與人聲")
         let familyMenu = NSMenu()
         if status.speakerMembers.isEmpty {
@@ -634,6 +710,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("解除安裝 FamilyRecorder…", action: #selector(openUninstaller)))
         menu.addItem(item("結束選單列程式", action: #selector(quitMenuBar)))
+    }
+
+    private func hallucinationPresetName(_ preset: String) -> String {
+        switch preset {
+        case "relaxed": return "寬鬆"
+        case "balanced": return "平衡"
+        case "strict": return "嚴格"
+        default: return "自訂"
+        }
+    }
+
+    private func buildHallucinationFilterMenu(_ status: RecorderStatus) -> NSMenuItem {
+        let filterItem = item("防幻覺過濾")
+        let filterMenu = NSMenu()
+        filterMenu.addItem(
+            item(
+                status.hallucinationFilter.enabled
+                    ? "已開啟 · 今日聲學攔截 \(status.hallucinationFilterStats.acoustic)／文字攔截 \(status.hallucinationFilterStats.transcription)"
+                    : "目前已關閉",
+                enabled: false
+            )
+        )
+        filterMenu.addItem(
+            item(
+                status.hallucinationFilter.enabled ? "關閉防幻覺過濾" : "開啟防幻覺過濾",
+                action: #selector(toggleHallucinationFilter)
+            )
+        )
+        filterMenu.addItem(.separator())
+
+        let strengthItem = item("保護強度")
+        let strengthMenu = NSMenu()
+        for preset in ["relaxed", "balanced", "strict"] {
+            let presetItem = item(
+                hallucinationPresetName(preset),
+                action: #selector(selectHallucinationPreset),
+                representedObject: preset
+            )
+            presetItem.state = status.hallucinationFilterPreset == preset ? .on : .off
+            strengthMenu.addItem(presetItem)
+        }
+        if status.hallucinationFilterPreset == "custom" {
+            let custom = item("自訂", enabled: false)
+            custom.state = .on
+            strengthMenu.addItem(custom)
+        }
+        strengthItem.submenu = strengthMenu
+        filterMenu.addItem(strengthItem)
+        filterMenu.addItem(
+            item("進階調整門檻…", action: #selector(editHallucinationThresholds))
+        )
+        filterMenu.addItem(.separator())
+        filterMenu.addItem(
+            item("不封鎖特定句子；依聲學、信心與跨片段重複判斷", enabled: false)
+        )
+        filterItem.submenu = filterMenu
+        return filterItem
     }
 
     private func buildCalendarMenu(_ status: RecorderStatus) -> NSMenuItem {
@@ -1399,6 +1532,180 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if restart.0 != 0 {
                 self?.showAlert(title: "設定已儲存，但錄音服務重啟失敗", message: restart.1)
             }
+        }
+    }
+
+    private func restartAfterHallucinationSetting(
+        status: Int32,
+        output: String,
+        successTitle: String
+    ) {
+        guard status == 0 else {
+            showAlert(title: "防幻覺設定失敗", message: output)
+            return
+        }
+        let restart = restartListener()
+        refreshStatus(rebuildMenu: true)
+        showAlert(
+            title: restart.0 == 0 ? successTitle : "設定已儲存，但錄音服務重啟失敗",
+            message: restart.0 == 0 ? output : "\(output)\n\(restart.1)"
+        )
+    }
+
+    @objc private func toggleHallucinationFilter() {
+        let enabled = !(currentStatus?.hallucinationFilter.enabled ?? true)
+        runRecorderAsync(
+            ["set-hallucination-filter", "--enabled", enabled ? "true" : "false"]
+        ) { [weak self] status, output in
+            self?.restartAfterHallucinationSetting(
+                status: status,
+                output: output,
+                successTitle: enabled ? "防幻覺過濾已開啟" : "防幻覺過濾已關閉"
+            )
+        }
+    }
+
+    @objc private func selectHallucinationPreset(_ sender: NSMenuItem) {
+        guard let preset = sender.representedObject as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = "切換為「\(hallucinationPresetName(preset))」保護？"
+        alert.informativeText =
+            preset == "strict"
+                ? "嚴格模式會攔截更多低信心與疑似底噪內容，也可能略過很短或很輕聲的真實說話。"
+                : "這會更新所有防幻覺門檻；之後仍可進階微調。"
+        alert.addButton(withTitle: "切換")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runRecorderAsync(["set-hallucination-preset", "--name", preset]) { [weak self] status, output in
+            self?.restartAfterHallucinationSetting(
+                status: status,
+                output: output,
+                successTitle: "防幻覺保護已切換"
+            )
+        }
+    }
+
+    private func thresholdField(_ value: Double, decimals: Int = 1) -> NSTextField {
+        let field = NSTextField(string: String(format: "%.*f", decimals, value))
+        field.alignment = .right
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        field.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        return field
+    }
+
+    @objc private func editHallucinationThresholds() {
+        guard let settings = currentStatus?.hallucinationFilter else { return }
+        let alert = NSAlert()
+        alert.messageText = "進階調整防幻覺門檻"
+        alert.informativeText =
+            "百分比越高不一定越嚴格；每列說明的是允許或拒絕的界線。不確定時建議使用「平衡」。"
+
+        let enabled = NSButton(checkboxWithTitle: "啟用整體防幻覺過濾", target: nil, action: nil)
+        enabled.state = settings.enabled ? .on : .off
+        let hardware = NSButton(checkboxWithTitle: "採用 XVF3800 硬體靜音證據", target: nil, action: nil)
+        hardware.state = settings.hardwareSilenceGuardEnabled ? .on : .off
+        let adaptive = NSButton(checkboxWithTitle: "採用自適應背景噪音基線", target: nil, action: nil)
+        adaptive.state = settings.adaptiveNoiseEnabled ? .on : .off
+        let lowFrequency = NSButton(checkboxWithTitle: "偵測低頻固定音／電氣底噪", target: nil, action: nil)
+        lowFrequency.state = settings.lowFrequencyFilterEnabled ? .on : .off
+        let confidence = NSButton(checkboxWithTitle: "檢查 Whisper 信心", target: nil, action: nil)
+        confidence.state = settings.whisperConfidenceEnabled ? .on : .off
+        let suppressNonSpeech = NSButton(checkboxWithTitle: "抑制 Whisper 非語音 token", target: nil, action: nil)
+        suppressNonSpeech.state = settings.suppressNonSpeechTokens ? .on : .off
+        let repeatFilter = NSButton(checkboxWithTitle: "攔截跨片段重複長句", target: nil, action: nil)
+        repeatFilter.state = settings.repeatFilterEnabled ? .on : .off
+
+        let hardwareRatio = thresholdField(settings.hardwareSilenceMaxRatio * 100)
+        let softwareRatio = thresholdField(settings.hardwareSilenceMaxSoftwareSpeechRatio * 100)
+        let snr = thresholdField(settings.hardwareSilenceMaxSNRDB)
+        let noiseWindow = thresholdField(Double(settings.noiseWindowChunks), decimals: 0)
+        let noiseSamples = thresholdField(Double(settings.noiseMinSamples), decimals: 0)
+        let noiseMargin = thresholdField(settings.noiseMarginDB)
+        let lowRatio = thresholdField(settings.lowFrequencyMinRatio * 100)
+        let tonalRatio = thresholdField(settings.tonalEnergyMinRatio * 100)
+        let noSpeech = thresholdField(settings.noSpeechProbabilityMax * 100)
+        let avgLogprob = thresholdField(settings.minAvgLogprob, decimals: 2)
+        let lowTokenProbability = thresholdField(settings.lowProbabilityThreshold * 100)
+        let lowTokenRatio = thresholdField(settings.maxLowProbabilityRatio * 100)
+        let compression = thresholdField(settings.maxCompressionRatio, decimals: 2)
+        let repeatMinutes = thresholdField(Double(settings.repeatWindowSeconds) / 60)
+        let repetitions = thresholdField(Double(settings.maxRepetitions), decimals: 0)
+        let repeatSimilarity = thresholdField(settings.repeatSimilarityThreshold * 100)
+        let repeatCharacters = thresholdField(Double(settings.minRepeatTextChars), decimals: 0)
+
+        let rows: [[NSView]] = [
+            [NSTextField(labelWithString: "硬體靜音上限"), hardwareRatio, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "硬體靜音時軟體語音上限"), softwareRatio, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "弱訊號 SNR 上限"), snr, NSTextField(labelWithString: "dB")],
+            [NSTextField(labelWithString: "背景基線歷史長度"), noiseWindow, NSTextField(labelWithString: "chunks")],
+            [NSTextField(labelWithString: "背景基線最少樣本"), noiseSamples, NSTextField(labelWithString: "chunks")],
+            [NSTextField(labelWithString: "背景基線容許範圍"), noiseMargin, NSTextField(labelWithString: "dB")],
+            [NSTextField(labelWithString: "低頻能量下限"), lowRatio, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "固定窄頻能量下限"), tonalRatio, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "Whisper 無語音機率上限"), noSpeech, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "Whisper 平均 log probability 下限"), avgLogprob, NSTextField(labelWithString: "-5～0")],
+            [NSTextField(labelWithString: "低可信 token 界線"), lowTokenProbability, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "低可信 token 比例上限"), lowTokenRatio, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "文字壓縮／重複率上限"), compression, NSTextField(labelWithString: "ratio")],
+            [NSTextField(labelWithString: "跨片段比對時間"), repeatMinutes, NSTextField(labelWithString: "分鐘")],
+            [NSTextField(labelWithString: "同句允許出現次數"), repetitions, NSTextField(labelWithString: "次")],
+            [NSTextField(labelWithString: "重複句相似度下限"), repeatSimilarity, NSTextField(labelWithString: "%")],
+            [NSTextField(labelWithString: "重複檢查最短文字"), repeatCharacters, NSTextField(labelWithString: "字")],
+        ]
+        let grid = NSGridView(views: rows)
+        grid.rowSpacing = 5
+        grid.columnSpacing = 8
+        grid.xPlacement = .leading
+
+        let stack = NSStackView(views: [
+            enabled, hardware, adaptive, lowFrequency, confidence, suppressNonSpeech,
+            repeatFilter, grid,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
+        stack.frame = NSRect(x: 0, y: 0, width: 560, height: 570)
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "儲存並重啟")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let arguments = [
+            "set-hallucination-filter",
+            "--enabled", enabled.state == .on ? "true" : "false",
+            "--hardware-silence-guard-enabled", hardware.state == .on ? "true" : "false",
+            "--adaptive-noise-enabled", adaptive.state == .on ? "true" : "false",
+            "--low-frequency-filter-enabled", lowFrequency.state == .on ? "true" : "false",
+            "--whisper-confidence-enabled", confidence.state == .on ? "true" : "false",
+            "--suppress-non-speech-tokens", suppressNonSpeech.state == .on ? "true" : "false",
+            "--repeat-filter-enabled", repeatFilter.state == .on ? "true" : "false",
+            "--hardware-silence-max-ratio", String(hardwareRatio.doubleValue / 100),
+            "--hardware-silence-max-software-speech-ratio", String(softwareRatio.doubleValue / 100),
+            "--hardware-silence-max-snr-db", String(snr.doubleValue),
+            "--noise-window-chunks", String(Int(noiseWindow.doubleValue.rounded())),
+            "--noise-min-samples", String(Int(noiseSamples.doubleValue.rounded())),
+            "--noise-margin-db", String(noiseMargin.doubleValue),
+            "--low-frequency-min-ratio", String(lowRatio.doubleValue / 100),
+            "--tonal-energy-min-ratio", String(tonalRatio.doubleValue / 100),
+            "--no-speech-probability-max", String(noSpeech.doubleValue / 100),
+            "--min-avg-logprob", String(avgLogprob.doubleValue),
+            "--low-probability-threshold", String(lowTokenProbability.doubleValue / 100),
+            "--max-low-probability-ratio", String(lowTokenRatio.doubleValue / 100),
+            "--max-compression-ratio", String(compression.doubleValue),
+            "--repeat-window-seconds", String(Int((repeatMinutes.doubleValue * 60).rounded())),
+            "--max-repetitions", String(Int(repetitions.doubleValue.rounded())),
+            "--repeat-similarity-threshold", String(repeatSimilarity.doubleValue / 100),
+            "--min-repeat-text-chars", String(Int(repeatCharacters.doubleValue.rounded())),
+        ]
+        runRecorderAsync(arguments) { [weak self] status, output in
+            self?.restartAfterHallucinationSetting(
+                status: status,
+                output: output,
+                successTitle: "防幻覺門檻已更新"
+            )
         }
     }
 

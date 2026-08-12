@@ -40,6 +40,37 @@ def test_load_config_accepts_common_terms(tmp_path: Path) -> None:
     assert config.whisper.common_terms == ("陳樂融", "FamilyRecorder")
 
 
+def test_load_config_accepts_adjustable_hallucination_thresholds(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """hallucination_filter:
+  enabled: true
+  hardware_silence_max_software_speech_ratio: 0.42
+  min_avg_logprob: -0.65
+  repeat_window_seconds: 600
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.hallucination_filter.enabled is True
+    assert config.hallucination_filter.hardware_silence_max_software_speech_ratio == 0.42
+    assert config.hallucination_filter.min_avg_logprob == -0.65
+    assert config.hallucination_filter.repeat_window_seconds == 600
+
+
+def test_load_config_rejects_invalid_hallucination_threshold(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "hallucination_filter:\n  max_low_probability_ratio: 1.5\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_low_probability_ratio"):
+        load_config(config_file)
+
+
 def test_load_config_rejects_unknown_key(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     config_file.write_text("audio:\n  mystery: true\n", encoding="utf-8")

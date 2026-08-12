@@ -30,12 +30,14 @@ XVF3800 / XMOS
 - 列出所有 macOS 輸入裝置，自動優先選擇名稱含 `XVF3800`、`XMOS`、`microphone array`、`USB` 的 UAC 裝置；預設不會悄悄改用 Mac 內建麥克風。
 - 連續讀取 30 秒 chunk。XVF3800 韌體若固定為 48 kHz，會先按裝置預設取樣率擷取，再於本機轉成 Whisper/VAD 使用的 16 kHz 單聲道 PCM16。
 - RMS silence gate、WebRTC VAD 與 XVF3800 auto-selected beam Speech Energy 融合；安靜片段不落 WAV、不進 Whisper，但本機仍保留低容量遙測供重新分析。
+- 多層防幻覺：硬體靜音可否決低 SNR 的 software-VAD 誤判；硬體暫時不可用時改用自適應噪音基線與低頻／窄頻固定音特徵；Whisper 回傳後再依 token 信心、無語音機率、文字重複度及跨 chunk 相似句過濾。規則不封鎖任何特定句子。
 - 呼叫本機 `whisper.cpp`，預設 `zh`、`large-v3-turbo`、8 threads；Apple Silicon 安裝時開啟 Metal。
 - 每日 Markdown 逐字稿，以及含時間、音量、SNR、software／hardware speech ratio、WAV 路徑、DoA 與四束 speech-energy time series 的 SQLite 索引。
 - 原始音訊保留天數與「成功轉錄後立即刪除」兩種 policy。
 - 每日只把逐字稿文字透過官方 `codex exec` 送到已登入的 ChatGPT 帳號；摘要會按原始片段時間與本機近似人別建立事件時間軸及家庭成員重點，過長逐字稿則依完整段落切分後再保留時間、人別並去重整併。
 - 三個使用者層級 LaunchAgent：listener 常駐、summary 依 YAML 指定時間每日執行、選單列控制登入後啟動。
 - 原生 macOS 選單列圖示：查看狀態、定時暫停／恢復、開啟資料、下載／切換 Whisper 模型、切換摘要模型、立即摘要、重啟與系統檢查。
+- 選單列的「防幻覺過濾」可切換寬鬆／平衡／嚴格模式、查看今天攔截數，或以圖形介面調整每一項主要門檻。
 - 可從選單維護姓名與專有名詞清單；字詞會加入本機 Whisper 提示，並在辨識後保守校正無歧義的單一字差近似結果。
 - 內建原生一鍵解除安裝：可只移除程式與模型並保留家庭資料，或把程式、模型、錄音、逐字稿、資料庫、人聲樣本與設定完整移到垃圾桶。
 - 可設定 1–8 位已知家庭成員；每人主動錄製 15 秒樣本後，只在本機保存不可播放的聲音特徵，為逐字稿標示「可能：某人／可能多人／不確定」。
@@ -197,6 +199,23 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `vad.min_rms_dbfs` | `-48` | 音量 gate；越接近 0 越嚴格 |
 | `whisper.language` | `zh` | Whisper 語言 |
 | `whisper.common_terms` | `[]` | 常用姓名／術語；可由選單逐行新增或移除，僅在本機使用 |
+| `hallucination_filter.enabled` | `true` | 啟用完整聲學＋Whisper＋跨片段防幻覺管線 |
+| `hallucination_filter.hardware_silence_max_ratio` | `0.01` | XVF3800 Speech Energy 不高於此比例時視為硬體靜音 |
+| `hallucination_filter.hardware_silence_max_software_speech_ratio` | `0.30` | 硬體靜音時，software VAD 低於此值才屬弱證據 |
+| `hallucination_filter.hardware_silence_max_snr_db` | `10` | 硬體靜音時，SNR 也不高於此值才否決，避免單一感測器造成漏字 |
+| `hallucination_filter.noise_window_chunks` / `noise_min_samples` | `120` / `4` | 自適應背景基線的歷史視窗與啟用前最少樣本數 |
+| `hallucination_filter.noise_margin_db` | `3` | 目前音量在背景基線多少 dB 內仍視為近似底噪 |
+| `hallucination_filter.low_frequency_min_ratio` | `0.65` | 80–300 Hz 低頻能量比例門檻 |
+| `hallucination_filter.tonal_energy_min_ratio` | `0.35` | 少數固定頻率占能量比例的門檻 |
+| `hallucination_filter.no_speech_probability_max` | `0.60` | Whisper 若提供無語音機率時的拒絕門檻，也傳給 whisper.cpp decoder |
+| `hallucination_filter.min_avg_logprob` | `-0.80` | Whisper 平均 token log probability 下限，越接近 0 越嚴格 |
+| `hallucination_filter.low_probability_threshold` | `0.15` | 單一 token 被視為低可信的機率界線 |
+| `hallucination_filter.max_low_probability_ratio` | `0.15` | 一段文字最多可有多少比例低可信 token |
+| `hallucination_filter.max_compression_ratio` | `2.40` | 過度重複文字的壓縮率上限 |
+| `hallucination_filter.repeat_window_seconds` | `300` | 跨 chunk 重複長句的回看時間 |
+| `hallucination_filter.max_repetitions` | `1` | 視窗內允許相同／近似長句先出現的次數 |
+| `hallucination_filter.repeat_similarity_threshold` | `0.96` | 正規化文字相似度達此比例視為重複 |
+| `hallucination_filter.min_repeat_text_chars` | `5` | 只有至少這麼長的文字才做跨片段重複過濾；不攔截「好」「嗯」 |
 | `storage.keep_audio_days` | `7` | WAV 保留天數；0 代表只保留仍未超過當下 cutoff 的檔案 |
 | `storage.delete_audio_after_transcription` | `false` | 成功或空白轉錄後立即刪 WAV；失敗 WAV 仍保留 |
 | `speakers.enabled` | `false` | 有家庭成員時由選單自動開啟本機近似人別 |
@@ -359,6 +378,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/listener.error.log"
 - 摘要模型可使用 ChatGPT 帳號預設，或輸入帳號實際可用的自訂 Codex 模型名稱。
 - 在「更換模型 → ChatGPT 摘要」以多行編輯器自訂每日摘要 Prompt，或一鍵恢復內建格式；變更只套用到之後產生或重新執行的摘要。
 - 在「常用字詞校正」逐行維護姓名與術語，例如 `陳樂融`；儲存後會重啟 listener 套用。
+- 在「防幻覺過濾」查看今天聲學／文字攔截數，選擇寬鬆、平衡或嚴格保護；「進階調整門檻…」可直接編輯百分比、SNR、log probability、重複視窗等設定並重啟 listener。
 - 在「家庭成員與人聲」編輯成員、查看註冊狀態、錄製／更新或刪除個別聲音樣本。
 - 在「Google Calendar」選擇全家預設日曆、為每位成員綁定多個日曆；可逐筆確認 AI 候選事件，或一次同意後自動加入。
 - 立即整理今天、重新啟動錄音服務、執行完整 `doctor` 檢查。
@@ -437,7 +457,9 @@ XVF3800 的 UAC 左右聲道可由韌體 audio mux 指向不同來源。FamilyRe
 
 DoA 與 Speech Energy 由同一台裝置的 USB vendor control 介面另行讀取。FamilyRecorder 在每個 30 秒錄音期間預設每 0.25 秒建立一列共同 offset，包含原始角度、`speech_detected`、focused beam 1/2、free-running beam 與 auto-selected beam 能量。相近角度會做環狀分群，因此 `358°` 與 `2°` 會視為同方向；若第二個相隔明顯的方向達到設定比例，該片段標成「方向：多個」。
 
-Speech Energy 的 auto-selected beam 非零比例可在 WebRTC VAD 漏掉較輕聲語音時保留 chunk；仍必須通過 `speech_energy_min_rms_dbfs`，避免極低音量雜訊只因單一硬體非零值就進入 Whisper。Software VAD 通過的 chunk 不會被硬體遙測否決；USB control 暫時讀不到時也會退回原本 software VAD，錄音主流程不會中斷。
+Speech Energy 的 auto-selected beam 非零比例可在 WebRTC VAD 漏掉較輕聲語音時保留 chunk；仍必須通過 `speech_energy_min_rms_dbfs`，避免極低音量雜訊只因單一硬體非零值就進入 Whisper。反過來，硬體明確靜音時，只有在 software VAD 比例與 SNR 同時偏低才否決，避免把單一硬體讀值當成絕對真相。USB control 暫時讀不到時會由自適應噪音基線接手，不會中斷錄音。
+
+每次 Whisper 完成後，`transcription_audits` 會在本機 SQLite 保存原始候選文字、接受／攔截決策、原因、平均 log probability、低可信 token 比例、壓縮率與跨片段相似次數。被攔截文字不會進入 Markdown 或每日雲端摘要；稽核資料與 WAV 仍遵守本機 retention 設定。
 
 第一次使用建議校準房間方向：
 
@@ -581,6 +603,9 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 26. `diagnose-beamforming` 讀回左、右 `AUDIO_MGR_OP`；預設單聲道設定明確顯示 `[OK]` 且左聲道是 category `6` processed 或 category `8` user-chosen auto-selected beam，不是 raw category。
 27. 實機靜音時 `AEC_SPENERGY_VALUES` 四束接近 0；說話時至少一束與 auto-selected beam 產生非零能量，`doctor` 顯示四值可讀。
 28. SQLite 的 `captures` 對安靜與語音 chunk 都有列；`acoustic_samples` 可用同一 `capture_id + offset_ms` 查到 DoA 與四束能量，硬體能量救回 software VAD miss 時 `gate_reason='xvf3800_speech_energy'`。
+29. 以硬體 Speech Energy 0%、software VAD 約 10–25%、SNR 低於 10 dB 的固定噪音測試，`captures.gate_reason` 為 `hallucination_filter:hardware_silence`，不產生逐字稿。
+30. 對兩個相隔 30 秒的相同長句測試，第一筆可接受，第二筆寫入 `transcription_audits.decision='filtered'` 且不追加 Markdown；「好／嗯」等短句不受此規則影響。
+31. 選單可顯示今日攔截數，寬鬆／平衡／嚴格與進階門檻修改後會保存 YAML 並成功重啟 listener。
 
 ## 常見問題
 
@@ -593,6 +618,8 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 **系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 
 **一直被 VAD 略過**：查看 log 的 RMS、software speech ratio、XVF3800 Speech Energy 與 `captures.gate_reason`。先以 software VAD 的 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。若 Speech Energy 永遠是 0，先跑 `doctor` 並對麥克風持續自然說話，不要把系統喇叭回音當成可靠近端測試。
+
+**安靜時一直出現相同字幕／人名**：這通常是 Whisper 對低資訊底噪產生的固定幻覺，不代表模型被植入。先確認選單「防幻覺過濾」已開啟並使用「平衡」；查看今日攔截數與 `transcription_audits.reason`。若仍漏過可改成「嚴格」，若短而輕聲的真實談話被略過則改成「寬鬆」，再以進階門檻微調。不要只把某一句加入黑名單，因為幻覺文字會隨模型與提示改變。
 
 **Beamforming 診斷不是 OK**：先確認 `audio.channels: 1`；`2` 會被判為左右混合、無法驗證。再執行 `diagnose-beamforming --json` 檢查左 routing。category `1/2/3/11` 是 raw/intermediate microphone，不應用於目前 FamilyRecorder；診斷只讀不改設定，如 routing 被其他工具改動，請依 XVF3800 韌體文件恢復 processed auto-selected beam。
 

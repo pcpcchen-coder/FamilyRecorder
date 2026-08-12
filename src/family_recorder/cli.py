@@ -9,11 +9,18 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import asdict, fields, replace
 from datetime import date
 from pathlib import Path
 
-from family_recorder.config import DEFAULT_SUMMARY_PROMPT, AppConfig, load_config
+from family_recorder.config import (
+    DEFAULT_SUMMARY_PROMPT,
+    HALLUCINATION_FILTER_PRESETS,
+    AppConfig,
+    HallucinationFilterConfig,
+    load_config,
+    validate_config,
+)
 from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
@@ -72,6 +79,68 @@ def _parser() -> argparse.ArgumentParser:
     summary_prompt.add_argument("--prompt", required=True)
     commands.add_parser("reset-summary-prompt", help="Restore the built-in summary instructions")
     commands.add_parser("menu-status", help=argparse.SUPPRESS)
+
+    hallucination_preset = commands.add_parser(
+        "set-hallucination-preset",
+        help="Select relaxed, balanced, or strict anti-hallucination thresholds",
+    )
+    hallucination_preset.add_argument(
+        "--name",
+        choices=tuple(HALLUCINATION_FILTER_PRESETS),
+        required=True,
+    )
+    hallucination = commands.add_parser(
+        "set-hallucination-filter",
+        help="Adjust local acoustic and Whisper hallucination thresholds",
+    )
+    boolean_filter_fields = (
+        "enabled",
+        "hardware_silence_guard_enabled",
+        "adaptive_noise_enabled",
+        "low_frequency_filter_enabled",
+        "whisper_confidence_enabled",
+        "suppress_non_speech_tokens",
+        "repeat_filter_enabled",
+    )
+    for name in boolean_filter_fields:
+        hallucination.add_argument(
+            f"--{name.replace('_', '-')}",
+            choices=("true", "false"),
+            dest=name,
+        )
+    integer_filter_fields = (
+        "noise_window_chunks",
+        "noise_min_samples",
+        "repeat_window_seconds",
+        "max_repetitions",
+        "min_repeat_text_chars",
+    )
+    for name in integer_filter_fields:
+        hallucination.add_argument(
+            f"--{name.replace('_', '-')}",
+            type=int,
+            dest=name,
+        )
+    numeric_filter_fields = (
+        "hardware_silence_max_ratio",
+        "hardware_silence_max_software_speech_ratio",
+        "hardware_silence_max_snr_db",
+        "noise_margin_db",
+        "low_frequency_min_ratio",
+        "tonal_energy_min_ratio",
+        "no_speech_probability_max",
+        "min_avg_logprob",
+        "low_probability_threshold",
+        "max_low_probability_ratio",
+        "max_compression_ratio",
+        "repeat_similarity_threshold",
+    )
+    for name in numeric_filter_fields:
+        hallucination.add_argument(
+            f"--{name.replace('_', '-')}",
+            type=float,
+            dest=name,
+        )
 
     common_terms = commands.add_parser(
         "set-common-terms", help="Set words and names used to improve local transcription"
@@ -308,6 +377,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
     data_dir = config.storage.data_dir
     profile_store = SpeakerProfileStore(data_dir)
     with Storage(config.storage) as storage:
+        hallucination_stats = storage.hallucination_filter_stats(today)
         pending_calendar_events = [
             {
                 "id": candidate.id,
@@ -344,6 +414,16 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "summary_model": config.summary.model,
         "summary_prompt": config.summary.prompt,
         "common_terms": list(config.whisper.common_terms),
+        "hallucination_filter": asdict(config.hallucination_filter),
+        "hallucination_filter_preset": next(
+            (
+                name
+                for name, preset in HALLUCINATION_FILTER_PRESETS.items()
+                if preset == config.hallucination_filter
+            ),
+            "custom",
+        ),
+        "hallucination_filter_stats": hallucination_stats,
         "speaker_enabled": config.speakers.enabled,
         "speaker_members": profile_store.statuses(config.speakers.members),
         "speaker_profiles_dir": str(profile_store.directory),
@@ -438,6 +518,42 @@ def main(argv: list[str] | None = None) -> int:
                 else "摘要 Prompt 已儲存"
             )
             print(message)
+            return 0
+        if args.command == "set-hallucination-preset":
+            preset = HALLUCINATION_FILTER_PRESETS[args.name]
+            config_path = args.config.expanduser().resolve()
+            for item in fields(HallucinationFilterConfig):
+                update_yaml_value(
+                    config_path,
+                    "hallucination_filter",
+                    item.name,
+                    getattr(preset, item.name),
+                )
+            print(f"防幻覺過濾已切換為 {args.name}")
+            return 0
+        if args.command == "set-hallucination-filter":
+            boolean_names = {
+                "enabled",
+                "hardware_silence_guard_enabled",
+                "adaptive_noise_enabled",
+                "low_frequency_filter_enabled",
+                "whisper_confidence_enabled",
+                "suppress_non_speech_tokens",
+                "repeat_filter_enabled",
+            }
+            updates: dict[str, object] = {}
+            for item in fields(HallucinationFilterConfig):
+                value = getattr(args, item.name, None)
+                if value is not None:
+                    updates[item.name] = value == "true" if item.name in boolean_names else value
+            if not updates:
+                raise ValueError("至少要提供一個防幻覺設定")
+            updated_filter = replace(config.hallucination_filter, **updates)
+            validate_config(replace(config, hallucination_filter=updated_filter))
+            config_path = args.config.expanduser().resolve()
+            for name, value in updates.items():
+                update_yaml_value(config_path, "hallucination_filter", name, value)
+            print("防幻覺過濾門檻已更新")
             return 0
         if args.command == "set-common-terms":
             terms = tuple(term.strip() for term in args.term if term.strip())

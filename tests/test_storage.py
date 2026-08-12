@@ -156,6 +156,58 @@ def test_capture_stores_speech_energy_time_series_even_when_gate_skips_audio(
     assert samples == [(0, 90.0, 0.0), (250, 91.0, 300.0)]
 
 
+def test_transcription_audit_persists_filter_evidence_and_recent_text(tmp_path: Path) -> None:
+    started = datetime(2026, 8, 9, 12, 30, tzinfo=UTC)
+    chunk = AudioChunk(b"\0" * 320, 16_000, started, started + timedelta(seconds=1))
+    analysis = AudioAnalysis(True, -40.0, 4.0, 0.12, 33)
+    direction_config = DirectionConfig()
+    acoustic = AcousticCapture(
+        summarize_direction([], direction_config),
+        summarize_speech_energy(
+            [SpeechEnergySample(0, 0, 0, 0, 0)],
+            direction_config,
+        ),
+        (),
+    )
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        capture_id = storage.save_capture(
+            chunk,
+            analysis,
+            acoustic,
+            combined_keep=True,
+            gate_reason="software_vad",
+            audio_path=tmp_path / "noise.wav",
+        )
+        storage.record_transcription_audit(
+            capture_id=capture_id,
+            started_at=started,
+            raw_text="請不吝點讚訂閱",
+            normalized_text="請不吝點讚訂閱",
+            decision="filtered",
+            reason="repeated_across_chunks",
+            avg_logprob=-0.82,
+            low_probability_ratio=0.175,
+            compression_ratio=1.9,
+            token_count=57,
+            similar_count=2,
+        )
+        recent = storage.recent_transcription_texts(
+            started + timedelta(seconds=30),
+            300,
+        )
+        row = storage.connection.execute(
+            "select decision, reason, avg_logprob, similar_count "
+            "from transcription_audits where capture_id = ?",
+            (capture_id,),
+        ).fetchone()
+        stats = storage.hallucination_filter_stats(started.date())
+
+    assert recent == ["請不吝點讚訂閱"]
+    assert row == ("filtered", "repeated_across_chunks", -0.82, 2)
+    assert stats == {"acoustic": 0, "transcription": 1, "total": 1}
+
+
 def test_segment_stores_direction_summary_and_samples(tmp_path: Path) -> None:
     started = datetime(2026, 8, 9, 12, 30, tzinfo=UTC)
     chunk = AudioChunk(b"\0" * 320, 16_000, started, started + timedelta(seconds=2))

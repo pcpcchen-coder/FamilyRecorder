@@ -23,6 +23,8 @@ def update_yaml_value(path: Path, section: str, key: str, value: object) -> None
     )
     if section_index is None:
         newline = "\r\n" if "\r\n" in original else "\n"
+        if original.strip() == "{}":
+            original = ""
         separator = "" if not original or original.endswith(("\n", "\r")) else newline
         updated = (
             f"{original}{separator}{newline if original else ''}{section}:{newline}"

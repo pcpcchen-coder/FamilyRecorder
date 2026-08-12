@@ -70,6 +70,26 @@ CREATE TABLE IF NOT EXISTS captures (
 CREATE INDEX IF NOT EXISTS idx_captures_started
 ON captures(started_at);
 
+CREATE TABLE IF NOT EXISTS transcription_audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    capture_id INTEGER UNIQUE REFERENCES captures(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    raw_text TEXT NOT NULL DEFAULT '',
+    normalized_text TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('accepted', 'filtered', 'empty', 'failed')),
+    reason TEXT NOT NULL DEFAULT '',
+    avg_logprob REAL,
+    no_speech_probability REAL,
+    low_probability_ratio REAL,
+    compression_ratio REAL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    similar_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_audits_started
+ON transcription_audits(started_at);
+
 CREATE TABLE IF NOT EXISTS acoustic_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     capture_id INTEGER NOT NULL REFERENCES captures(id) ON DELETE CASCADE,
@@ -273,6 +293,134 @@ class Storage:
                     ),
                 )
         return capture_id
+
+    def recent_noise_levels(self, hardware_max_ratio: float, limit: int) -> list[float]:
+        rows = self.connection.execute(
+            """
+            SELECT rms_dbfs
+            FROM captures
+            WHERE combined_keep = 0
+               OR (hardware_speech_ratio IS NOT NULL AND hardware_speech_ratio <= ?)
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (hardware_max_ratio, limit),
+        ).fetchall()
+        return [float(row[0]) for row in reversed(rows)]
+
+    def recent_transcription_texts(
+        self,
+        started_at: datetime,
+        window_seconds: int,
+        *,
+        limit: int = 500,
+    ) -> list[str]:
+        since = started_at - timedelta(seconds=window_seconds)
+        rows = self.connection.execute(
+            """
+            SELECT normalized_text
+            FROM transcription_audits
+            WHERE started_at >= ?
+              AND started_at < ?
+              AND decision IN ('accepted', 'filtered')
+              AND normalized_text != ''
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (since.isoformat(), started_at.isoformat(), limit),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def record_transcription_audit(
+        self,
+        *,
+        capture_id: int | None,
+        started_at: datetime,
+        raw_text: str,
+        normalized_text: str,
+        decision: str,
+        reason: str,
+        avg_logprob: float | None = None,
+        no_speech_probability: float | None = None,
+        low_probability_ratio: float | None = None,
+        compression_ratio: float | None = None,
+        token_count: int = 0,
+        similar_count: int = 0,
+    ) -> None:
+        values = (
+            capture_id,
+            started_at.isoformat(),
+            raw_text,
+            normalized_text,
+            decision,
+            reason,
+            avg_logprob,
+            no_speech_probability,
+            low_probability_ratio,
+            compression_ratio,
+            token_count,
+            similar_count,
+            datetime.now().astimezone().isoformat(),
+        )
+        with self.connection:
+            if capture_id is None:
+                self.connection.execute(
+                    """
+                    INSERT INTO transcription_audits (
+                        capture_id, started_at, raw_text, normalized_text, decision, reason,
+                        avg_logprob, no_speech_probability, low_probability_ratio,
+                        compression_ratio, token_count, similar_count, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    values,
+                )
+            else:
+                self.connection.execute(
+                    """
+                    INSERT INTO transcription_audits (
+                        capture_id, started_at, raw_text, normalized_text, decision, reason,
+                        avg_logprob, no_speech_probability, low_probability_ratio,
+                        compression_ratio, token_count, similar_count, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(capture_id) DO UPDATE SET
+                        started_at = excluded.started_at,
+                        raw_text = excluded.raw_text,
+                        normalized_text = excluded.normalized_text,
+                        decision = excluded.decision,
+                        reason = excluded.reason,
+                        avg_logprob = excluded.avg_logprob,
+                        no_speech_probability = excluded.no_speech_probability,
+                        low_probability_ratio = excluded.low_probability_ratio,
+                        compression_ratio = excluded.compression_ratio,
+                        token_count = excluded.token_count,
+                        similar_count = excluded.similar_count,
+                        created_at = excluded.created_at
+                    """,
+                    values,
+                )
+
+    def hallucination_filter_stats(self, target_date: date) -> dict[str, int]:
+        day = target_date.isoformat()
+        acoustic = self.connection.execute(
+            """
+            SELECT count(*) FROM captures
+            WHERE substr(started_at, 1, 10) = ?
+              AND gate_reason LIKE 'hallucination_filter:%'
+            """,
+            (day,),
+        ).fetchone()[0]
+        transcription = self.connection.execute(
+            """
+            SELECT count(*) FROM transcription_audits
+            WHERE substr(started_at, 1, 10) = ? AND decision = 'filtered'
+            """,
+            (day,),
+        ).fetchone()[0]
+        return {
+            "acoustic": int(acoustic),
+            "transcription": int(transcription),
+            "total": int(acoustic) + int(transcription),
+        }
 
     def save_segment(
         self,

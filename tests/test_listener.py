@@ -31,7 +31,7 @@ def test_capture_continues_while_previous_chunk_is_transcribed(
     release_transcription = threading.Event()
 
     class FakeTranscriber:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, _hallucination_filter=None) -> None:
             pass
 
         def validate(self) -> None:
@@ -94,7 +94,7 @@ def test_listener_does_not_open_microphone_while_paused(tmp_path: Path, monkeypa
     opened = False
 
     class FakeTranscriber:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, _hallucination_filter=None) -> None:
             pass
 
         def validate(self) -> None:
@@ -126,7 +126,7 @@ def test_timed_text_segments_align_independent_speaker_and_direction_evidence(
     import family_recorder.listener as listener
 
     class FakeTranscriber:
-        def __init__(self, _config) -> None:
+        def __init__(self, _config, _hallucination_filter=None) -> None:
             pass
 
         def validate(self) -> None:

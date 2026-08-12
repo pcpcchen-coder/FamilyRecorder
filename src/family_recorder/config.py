@@ -43,6 +43,69 @@ class WhisperConfig:
 
 
 @dataclass(frozen=True)
+class HallucinationFilterConfig:
+    enabled: bool = True
+    hardware_silence_guard_enabled: bool = True
+    hardware_silence_max_ratio: float = 0.01
+    hardware_silence_max_software_speech_ratio: float = 0.30
+    hardware_silence_max_snr_db: float = 10.0
+    adaptive_noise_enabled: bool = True
+    noise_window_chunks: int = 120
+    noise_min_samples: int = 4
+    noise_margin_db: float = 3.0
+    low_frequency_filter_enabled: bool = True
+    low_frequency_min_ratio: float = 0.65
+    tonal_energy_min_ratio: float = 0.35
+    whisper_confidence_enabled: bool = True
+    no_speech_probability_max: float = 0.60
+    min_avg_logprob: float = -0.80
+    low_probability_threshold: float = 0.15
+    max_low_probability_ratio: float = 0.15
+    max_compression_ratio: float = 2.40
+    suppress_non_speech_tokens: bool = True
+    repeat_filter_enabled: bool = True
+    repeat_window_seconds: int = 300
+    max_repetitions: int = 1
+    repeat_similarity_threshold: float = 0.96
+    min_repeat_text_chars: int = 5
+
+
+HALLUCINATION_FILTER_PRESETS: dict[str, HallucinationFilterConfig] = {
+    "relaxed": HallucinationFilterConfig(
+        hardware_silence_max_software_speech_ratio=0.20,
+        hardware_silence_max_snr_db=6.0,
+        noise_margin_db=1.0,
+        low_frequency_min_ratio=0.75,
+        tonal_energy_min_ratio=0.45,
+        min_avg_logprob=-1.00,
+        max_low_probability_ratio=0.25,
+        max_compression_ratio=2.80,
+        repeat_window_seconds=180,
+        max_repetitions=2,
+        repeat_similarity_threshold=0.99,
+        min_repeat_text_chars=8,
+    ),
+    "balanced": HallucinationFilterConfig(),
+    "strict": HallucinationFilterConfig(
+        hardware_silence_max_ratio=0.03,
+        hardware_silence_max_software_speech_ratio=0.40,
+        hardware_silence_max_snr_db=14.0,
+        noise_margin_db=5.0,
+        low_frequency_min_ratio=0.55,
+        tonal_energy_min_ratio=0.25,
+        no_speech_probability_max=0.50,
+        min_avg_logprob=-0.60,
+        low_probability_threshold=0.20,
+        max_low_probability_ratio=0.10,
+        max_compression_ratio=2.20,
+        repeat_window_seconds=600,
+        repeat_similarity_threshold=0.92,
+        min_repeat_text_chars=4,
+    ),
+}
+
+
+@dataclass(frozen=True)
 class StorageConfig:
     data_dir: Path = Path("~/xvf3800-listener-data")
     keep_audio_days: int = 7
@@ -118,6 +181,9 @@ class AppConfig:
     audio: AudioConfig = field(default_factory=AudioConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    hallucination_filter: HallucinationFilterConfig = field(
+        default_factory=HallucinationFilterConfig
+    )
     storage: StorageConfig = field(default_factory=StorageConfig)
     speakers: SpeakerConfig = field(default_factory=SpeakerConfig)
     direction: DirectionConfig = field(default_factory=DirectionConfig)
@@ -173,6 +239,13 @@ def load_config(path: str | Path) -> AppConfig:
     if "extra_args" in whisper_values:
         whisper_values["extra_args"] = tuple(str(v) for v in whisper_values["extra_args"])
     whisper = WhisperConfig(**whisper_values)
+
+    hallucination_filter = HallucinationFilterConfig(
+        **_known_values(
+            HallucinationFilterConfig,
+            raw.get("hallucination_filter", {}),
+        )
+    )
 
     storage_values = _known_values(StorageConfig, raw.get("storage", {}))
     storage_values["data_dir"] = _path(storage_values.get("data_dir", StorageConfig().data_dir))
@@ -230,6 +303,7 @@ def load_config(path: str | Path) -> AppConfig:
         audio=audio,
         vad=vad,
         whisper=whisper,
+        hallucination_filter=hallucination_filter,
         storage=storage,
         speakers=speakers,
         direction=direction,
@@ -254,6 +328,42 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("vad.frame_ms must be 10, 20, or 30")
     if not 0 <= config.vad.min_speech_ratio <= 1:
         raise ValueError("vad.min_speech_ratio must be between 0 and 1")
+    hallucination = config.hallucination_filter
+    for name in (
+        "hardware_silence_max_ratio",
+        "hardware_silence_max_software_speech_ratio",
+        "low_frequency_min_ratio",
+        "tonal_energy_min_ratio",
+        "no_speech_probability_max",
+        "low_probability_threshold",
+        "max_low_probability_ratio",
+        "repeat_similarity_threshold",
+    ):
+        value = getattr(hallucination, name)
+        if not 0 <= value <= 1:
+            raise ValueError(f"hallucination_filter.{name} must be between 0 and 1")
+    if not -20 <= hallucination.hardware_silence_max_snr_db <= 80:
+        raise ValueError(
+            "hallucination_filter.hardware_silence_max_snr_db must be between -20 and 80"
+        )
+    if hallucination.noise_window_chunks < 1:
+        raise ValueError("hallucination_filter.noise_window_chunks must be at least 1")
+    if not 1 <= hallucination.noise_min_samples <= hallucination.noise_window_chunks:
+        raise ValueError(
+            "hallucination_filter.noise_min_samples must be between 1 and noise_window_chunks"
+        )
+    if not 0 <= hallucination.noise_margin_db <= 30:
+        raise ValueError("hallucination_filter.noise_margin_db must be between 0 and 30")
+    if not -5 <= hallucination.min_avg_logprob <= 0:
+        raise ValueError("hallucination_filter.min_avg_logprob must be between -5 and 0")
+    if not 1 <= hallucination.max_compression_ratio <= 10:
+        raise ValueError("hallucination_filter.max_compression_ratio must be between 1 and 10")
+    if not 1 <= hallucination.repeat_window_seconds <= 86_400:
+        raise ValueError("hallucination_filter.repeat_window_seconds must be between 1 and 86400")
+    if not 0 <= hallucination.max_repetitions <= 100:
+        raise ValueError("hallucination_filter.max_repetitions must be between 0 and 100")
+    if not 1 <= hallucination.min_repeat_text_chars <= 200:
+        raise ValueError("hallucination_filter.min_repeat_text_chars must be between 1 and 200")
     if config.storage.keep_audio_days < 0:
         raise ValueError("storage.keep_audio_days cannot be negative")
     if len(config.whisper.common_terms) > 100:

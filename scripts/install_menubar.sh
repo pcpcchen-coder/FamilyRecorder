@@ -20,6 +20,7 @@ LISTENER_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.listener.plist"
 SUMMARY_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.summary.plist"
 TEMPLATE="$REPO_ROOT/launchd/com.familyrecorder.menubar.plist.in"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 if [[ ! -x "$PROGRAM" || ! -f "$CONFIG_PATH" ]]; then
   echo "Run scripts/install_mac.sh before installing the menu bar app." >&2
@@ -63,7 +64,7 @@ xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -fram
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
-codesign --force --deep --sign - "$APP_ROOT"
+codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP_ROOT"
 plutil -lint "$APP_ROOT/Contents/Info.plist"
 
 # Register the bundle before loading the associated LaunchAgents so macOS can
@@ -82,7 +83,7 @@ install -m 644 \
 install -m 755 \
   "$REPO_ROOT/scripts/uninstall_family_recorder.sh" \
   "$UNINSTALLER_RESOURCES/uninstall_family_recorder.sh"
-codesign --force --deep --sign - "$UNINSTALLER_ROOT"
+codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$UNINSTALLER_ROOT"
 plutil -lint "$UNINSTALLER_ROOT/Contents/Info.plist"
 
 "$RUNTIME_ROOT/venv/bin/python" - \

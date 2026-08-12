@@ -28,6 +28,37 @@ whisper:
   common_terms: []
   extra_args: []
 
+# Multi-layer protection against deterministic Whisper text on silence or
+# steady noise. All thresholds can also be changed from the menu bar. The
+# balanced defaults use XVF3800 speech energy, adaptive noise-floor tracking,
+# Whisper token confidence, and cross-chunk repetition; they do not blacklist
+# any particular sentence.
+hallucination_filter:
+  enabled: true
+  hardware_silence_guard_enabled: true
+  hardware_silence_max_ratio: 0.01
+  hardware_silence_max_software_speech_ratio: 0.30
+  hardware_silence_max_snr_db: 10.0
+  adaptive_noise_enabled: true
+  noise_window_chunks: 120
+  noise_min_samples: 4
+  noise_margin_db: 3.0
+  low_frequency_filter_enabled: true
+  low_frequency_min_ratio: 0.65
+  tonal_energy_min_ratio: 0.35
+  whisper_confidence_enabled: true
+  no_speech_probability_max: 0.60
+  min_avg_logprob: -0.80
+  low_probability_threshold: 0.15
+  max_low_probability_ratio: 0.15
+  max_compression_ratio: 2.40
+  suppress_non_speech_tokens: true
+  repeat_filter_enabled: true
+  repeat_window_seconds: 300
+  max_repetitions: 1
+  repeat_similarity_threshold: 0.96
+  min_repeat_text_chars: 5
+
 storage:
   data_dir: "~/xvf3800-listener-data"
   keep_audio_days: 7
