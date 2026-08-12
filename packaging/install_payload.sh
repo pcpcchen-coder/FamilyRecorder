@@ -5,6 +5,7 @@ RESOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD_ROOT="$RESOURCE_ROOT/FamilyRecorderPayload"
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.codex/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 log() {
@@ -141,11 +142,13 @@ install_family_recorder() {
   log "正在安裝選單列控制程式…"
   FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
   FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
+  FAMILYRECORDER_APP_ROOT="$APP_ROOT" \
     "$PAYLOAD_ROOT/scripts/install_menubar.sh"
 
   log "正在啟用錄音常駐服務…"
   FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
   FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
+  FAMILYRECORDER_APP_ROOT="$APP_ROOT" \
     "$PAYLOAD_ROOT/scripts/install_launchd.sh"
 
   codex_bin="$(find_codex || true)"
@@ -153,6 +156,7 @@ install_family_recorder() {
     log "正在安裝每日純文字摘要排程…"
     FAMILYRECORDER_RUNTIME_ROOT="$RUNTIME_ROOT" \
     FAMILYRECORDER_CONFIG="$CONFIG_PATH" \
+    FAMILYRECORDER_APP_ROOT="$APP_ROOT" \
       "$PAYLOAD_ROOT/scripts/install_daily_summary.sh"
   else
     log "提醒：尚未完成 ChatGPT 登入，因此暫不安裝每日摘要排程。"
@@ -174,6 +178,7 @@ dry_run() {
   log "DRY_RUN_OK=1"
   log "MODEL=$model"
   log "RUNTIME_ROOT=$RUNTIME_ROOT"
+  log "APP_ROOT=$APP_ROOT"
   log "CONFIG_PATH=$CONFIG_PATH"
   log "WHEEL=$(find "$PAYLOAD_ROOT/wheel" -maxdepth 1 -name 'family_recorder-*.whl' -print -quit)"
 }

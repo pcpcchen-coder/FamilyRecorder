@@ -10,7 +10,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
 PROGRAM="$RUNTIME_ROOT/venv/bin/family-recorder"
-APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
+LEGACY_APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"
 APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/FamilyRecorder"
 UNINSTALLER_ROOT="$RUNTIME_ROOT/解除安裝 FamilyRecorder.app"
 UNINSTALLER_EXECUTABLE="$UNINSTALLER_ROOT/Contents/MacOS/FamilyRecorderUninstaller"
@@ -52,13 +53,16 @@ launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
 launchctl bootout "gui/$UID" "$LISTENER_PLIST" 2>/dev/null || true
 launchctl bootout "gui/$UID" "$SUMMARY_PLIST" 2>/dev/null || true
 mkdir -p \
+  "$(dirname "$APP_ROOT")" \
   "$APP_ROOT/Contents/MacOS" \
   "$UNINSTALLER_ROOT/Contents/MacOS" \
   "$UNINSTALLER_RESOURCES" \
   "$HOME/Library/LaunchAgents" \
   "$LOG_DIR"
-if [[ -x "$LSREGISTER" && -d "$APP_ROOT" ]]; then
-  "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
+if [[ -x "$LSREGISTER" ]]; then
+  [[ ! -d "$APP_ROOT" ]] || "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
+  [[ ! -d "$LEGACY_APP_ROOT" ]] || \
+    "$LSREGISTER" -u "$LEGACY_APP_ROOT" >/dev/null 2>&1 || true
 fi
 rm -f "$APP_ROOT/Contents/MacOS/FamilyRecorderMenuBar"
 xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -framework EventKit \
@@ -67,6 +71,7 @@ xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -fram
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
 codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_ROOT"
+codesign --verify --deep --strict "$APP_ROOT"
 plutil -lint "$APP_ROOT/Contents/Info.plist"
 
 # Register the bundle before loading the associated LaunchAgents so macOS can
@@ -74,6 +79,21 @@ plutil -lint "$APP_ROOT/Contents/Info.plist"
 # user-facing FamilyRecorder app instead of its Python worker executable.
 if [[ -x "$LSREGISTER" ]]; then
   "$LSREGISTER" -f "$APP_ROOT"
+fi
+if command -v mdimport >/dev/null 2>&1; then
+  mdimport -i "$APP_ROOT" >/dev/null 2>&1 || true
+fi
+
+# Releases before 0.14.2 placed the bundle inside Application Support. That
+# hidden duplicate can keep stale Spotlight/TCC identity metadata alive, so it
+# must be removed after the replacement app has been signed and registered.
+if [[ "$LEGACY_APP_ROOT" != "$APP_ROOT" && -d "$LEGACY_APP_ROOT" ]]; then
+  if [[ "$LEGACY_APP_ROOT" != "$RUNTIME_ROOT/FamilyRecorder.app" ]]; then
+    echo "Refusing to remove an unexpected legacy app path: $LEGACY_APP_ROOT" >&2
+    exit 1
+  fi
+  rm -rf -- "$LEGACY_APP_ROOT"
+  echo "Removed the legacy hidden FamilyRecorder.app"
 fi
 
 xcrun swiftc -O -parse-as-library -swift-version 5 -framework AppKit \
@@ -109,6 +129,33 @@ Path(target).write_text(text, encoding="utf-8")
 PY
 
 plutil -lint "$PLIST"
+
+# Existing listener/summary plists may still point at the pre-0.14.2 hidden
+# bundle. Preserve their other settings while migrating only argv[0].
+"$RUNTIME_ROOT/venv/bin/python" - \
+  "$LISTENER_PLIST" "$SUMMARY_PLIST" "$APP_EXECUTABLE" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+listener, summary, app_executable = sys.argv[1:]
+for raw_path in (listener, summary):
+    path = Path(raw_path)
+    if not path.is_file():
+        continue
+    payload = plistlib.loads(path.read_bytes())
+    arguments = payload.get("ProgramArguments", [])
+    if arguments and arguments[0].endswith(
+        "/FamilyRecorder.app/Contents/MacOS/FamilyRecorder"
+    ):
+        arguments[0] = app_executable
+        path.write_bytes(plistlib.dumps(payload))
+PY
+
+for service_plist in "$LISTENER_PLIST" "$SUMMARY_PLIST"; do
+  [[ ! -f "$service_plist" ]] || plutil -lint "$service_plist"
+done
+
 launchctl bootstrap "gui/$UID" "$PLIST"
 if [[ "$LISTENER_WAS_LOADED" == true && -f "$LISTENER_PLIST" ]]; then
   launchctl bootstrap "gui/$UID" "$LISTENER_PLIST"

@@ -101,7 +101,7 @@ cd FamilyRecorder
 ./scripts/install_menubar.sh
 ```
 
-它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」，安裝到 runtime，並建立登入後自動啟動的內部工作；不需要另外安裝 GUI framework。首次啟動時會先顯示 FamilyRecorder 的用途說明；按「繼續並允許麥克風」後，再在 macOS 提示按「允許」。授權視窗不會卡住安裝器。listener、每日摘要與選單列雖然是三個內部工作，macOS 會把它們關聯到同一個 `FamilyRecorder.app`。
+它會用 Mac 內建的 Swift 工具編譯原生 `FamilyRecorder.app` 與「解除安裝 FamilyRecorder.app」；主 App 安裝到標準的 `~/Applications/FamilyRecorder.app`，Python runtime、Whisper 模型與解除安裝器保留在 `~/Library/Application Support/FamilyRecorder`。首次啟動會直接顯示 macOS 原生麥克風授權提示；按「允許」後才會啟動 listener。三個內部工作都關聯到 `~/Applications` 裡的同一個 `FamilyRecorder.app`，避免隱藏路徑造成 Spotlight／TCC 身分快取不一致。
 
 ### macOS 中看到的名稱
 
@@ -131,6 +131,7 @@ WHISPER_MODEL=medium ./scripts/install_mac.sh
 
 ```bash
 RUNTIME="$HOME/Library/Application Support/FamilyRecorder"
+APP="$HOME/Applications/FamilyRecorder.app"
 CONFIG="$HOME/.config/familyrecorder/config.yaml"
 
 "$RUNTIME/venv/bin/family-recorder" --config "$CONFIG" list-devices
@@ -168,7 +169,7 @@ audio:
 到「系統設定 → 隱私權與安全性 → 麥克風」允許 `FamilyRecorder`，再透過原生 App 身分跑一個 30 秒 chunk。開始後持續說話，避免被 VAD 判成安靜：
 
 ```bash
-"$RUNTIME/FamilyRecorder.app/Contents/MacOS/FamilyRecorder" \
+"$APP/Contents/MacOS/FamilyRecorder" \
   --service listener-once \
   --program "$RUNTIME/venv/bin/family-recorder" \
   --config "$CONFIG"
@@ -615,7 +616,7 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 
 **LaunchAgent 沒收到聲音**：先使用「第一次硬體 bring-up」中的 `FamilyRecorder --service listener-once` 指令測試；檢查「系統設定 → 隱私權與安全性 → 麥克風」中 `FamilyRecorder.app` 已開啟，以及 `listener.error.log`。macOS 麥克風權限是每台機器的互動授權，安裝腳本不能替你繞過。
 
-**麥克風 App 列表沒有 FamilyRecorder**：升級至 0.14.1 或更新版本並重跑 `install_menubar.sh`。新版簽章包含 Hardened Runtime 所需的 Audio Input entitlement，首次啟動會直接送出 macOS 原生授權請求；按「允許」後 `FamilyRecorder.app` 才會出現在列表。若是從 0.14.0 升級，請完整結束並重新啟動 FamilyRecorder，讓背景 listener 重新讀取授權。
+**麥克風 App 列表沒有 FamilyRecorder**：升級至 0.14.2 或更新版本並重跑 `install_menubar.sh`、`install_launchd.sh`。新版把主 App 安裝到標準的 `~/Applications/FamilyRecorder.app`、包含 Hardened Runtime 所需的 Audio Input entitlement，並自動移除 0.14.1 以前位於 Application Support 的隱藏舊 App。首次啟動按下 macOS 的「允許」後，完整重開系統設定即可看到 `FamilyRecorder.app`；模型、逐字稿與錄音資料不會因遷移而移動。
 
 **系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 

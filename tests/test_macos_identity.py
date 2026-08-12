@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 APP_BUNDLE_ID = "com.familyrecorder.app"
-APP_EXECUTABLE = "/Library/Application Support/FamilyRecorder.app/Contents/MacOS/FamilyRecorder"
+APP_EXECUTABLE = "/Users/test/Applications/FamilyRecorder.app/Contents/MacOS/FamilyRecorder"
 PROGRAM = "/Library/Application Support/FamilyRecorder/venv/bin/family-recorder"
 
 
@@ -40,6 +40,8 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
 
     installer = (ROOT / "scripts" / "install_menubar.sh").read_text(encoding="utf-8")
     assert '--entitlements "$ENTITLEMENTS"' in installer
+    assert "$HOME/Applications/FamilyRecorder.app" in installer
+    assert 'LEGACY_APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"' in installer
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:
@@ -75,7 +77,8 @@ def test_installer_builds_the_app_before_starting_the_listener() -> None:
 def test_service_installers_launch_the_native_app_wrapper() -> None:
     for script_name in ("install_launchd.sh", "install_daily_summary.sh"):
         script = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
-        assert 'FamilyRecorder.app/Contents/MacOS/FamilyRecorder"' in script
+        assert "$HOME/Applications/FamilyRecorder.app" in script
+        assert 'APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/FamilyRecorder"' in script
         assert '"__APP_EXECUTABLE__": app_executable' in script
 
 

@@ -10,13 +10,15 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "uninstall_family_recorder.sh"
 def _environment(tmp_path: Path, *, data_root: Path | None = None) -> dict[str, str]:
     home = tmp_path / "home"
     runtime = home / "Library" / "Application Support" / "FamilyRecorder"
+    app = home / "Applications" / "FamilyRecorder.app"
     config = home / ".config" / "familyrecorder" / "config.yaml"
     data = data_root or home / "xvf3800-listener-data"
     agents = home / "Library" / "LaunchAgents"
     trash = home / ".Trash"
-    for directory in (runtime, config.parent, data, agents, trash):
+    for directory in (runtime, app / "Contents" / "MacOS", config.parent, data, agents, trash):
         directory.mkdir(parents=True, exist_ok=True)
     (runtime / "model.bin").write_bytes(b"model")
+    (app / "Contents" / "MacOS" / "FamilyRecorder").write_bytes(b"app")
     config.write_text("storage:\n  data_dir: ignored-in-test\n", encoding="utf-8")
     (data / ".familyrecorder-data").write_text("", encoding="utf-8")
     (data / "transcripts").mkdir(exist_ok=True)
@@ -31,6 +33,7 @@ def _environment(tmp_path: Path, *, data_root: Path | None = None) -> dict[str, 
         **os.environ,
         "HOME": str(home),
         "FAMILYRECORDER_RUNTIME_ROOT": str(runtime),
+        "FAMILYRECORDER_APP_ROOT": str(app),
         "FAMILYRECORDER_CONFIG": str(config),
         "FAMILYRECORDER_DATA_ROOT": str(data),
         "FAMILYRECORDER_LAUNCH_AGENTS_ROOT": str(agents),
@@ -60,6 +63,7 @@ def test_inspect_reports_installed_paths_and_sizes(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "INSTALLED=1" in result.stdout
+    assert int(_value(result.stdout, "APP_BYTES")) > 0
     assert int(_value(result.stdout, "RUNTIME_BYTES")) > 0
     assert int(_value(result.stdout, "DATA_BYTES")) > 0
     assert int(_value(result.stdout, "TOTAL_BYTES")) > 0
@@ -71,6 +75,7 @@ def test_keep_data_removes_runtime_and_agents_but_preserves_private_data(tmp_pat
     assert result.returncode == 0, result.stderr
     assert "UNINSTALL_OK=1" in result.stdout
     home = tmp_path / "home"
+    assert not (home / "Applications" / "FamilyRecorder.app").exists()
     assert not (home / "Library" / "Application Support" / "FamilyRecorder").exists()
     assert not any((home / "Library" / "LaunchAgents").glob("com.familyrecorder.*.plist"))
     assert (home / "xvf3800-listener-data" / "transcripts" / "today.md").is_file()
@@ -83,10 +88,14 @@ def test_full_uninstall_moves_runtime_config_and_marked_data_to_trash(tmp_path: 
 
     assert result.returncode == 0, result.stderr
     home = tmp_path / "home"
+    assert not (home / "Applications" / "FamilyRecorder.app").exists()
     assert not (home / "Library" / "Application Support" / "FamilyRecorder").exists()
     assert not (home / "xvf3800-listener-data").exists()
     assert not (home / ".config" / "familyrecorder").exists()
     trash_session = Path(_value(result.stdout, "TRASH_PATH"))
+    assert (
+        trash_session / "應用程式" / "FamilyRecorder.app" / "Contents" / "MacOS" / "FamilyRecorder"
+    ).is_file()
     assert (trash_session / "程式與模型" / "FamilyRecorder" / "model.bin").is_file()
     assert (
         trash_session / "家庭資料" / "xvf3800-listener-data" / "transcripts" / "today.md"

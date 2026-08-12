@@ -2,12 +2,14 @@
 set -euo pipefail
 
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
 LAUNCH_AGENTS_ROOT="${FAMILYRECORDER_LAUNCH_AGENTS_ROOT:-$HOME/Library/LaunchAgents}"
 TRASH_ROOT="${FAMILYRECORDER_TRASH_ROOT:-$HOME/.Trash}"
 SKIP_LAUNCHCTL="${FAMILYRECORDER_SKIP_LAUNCHCTL:-0}"
 DEFAULT_DATA_ROOT="$HOME/xvf3800-listener-data"
 DATA_ROOT="${FAMILYRECORDER_DATA_ROOT:-}"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 fail() {
   printf 'ERROR=%s\n' "$1" >&2
@@ -54,20 +56,26 @@ has_launch_agent() {
 
 inspect_installation() {
   DATA_ROOT="$(resolve_data_root)"
-  local runtime_bytes data_bytes config_bytes total installed
+  local app_bytes runtime_bytes program_bytes data_bytes config_bytes total installed
+  app_bytes="$(size_bytes "$APP_ROOT")"
   runtime_bytes="$(size_bytes "$RUNTIME_ROOT")"
+  program_bytes="$((app_bytes + runtime_bytes))"
   data_bytes="$(size_bytes "$DATA_ROOT")"
   config_bytes="$(size_bytes "$(dirname "$CONFIG_PATH")")"
-  total="$((runtime_bytes + data_bytes + config_bytes))"
+  total="$((program_bytes + data_bytes + config_bytes))"
   installed=0
-  if [[ -e "$RUNTIME_ROOT" || -e "$CONFIG_PATH" || -e "$DATA_ROOT" ]] || has_launch_agent; then
+  if [[ -e "$APP_ROOT" || -e "$RUNTIME_ROOT" || -e "$CONFIG_PATH" || -e "$DATA_ROOT" ]] || \
+    has_launch_agent; then
     installed=1
   fi
   printf 'INSTALLED=%s\n' "$installed"
+  printf 'APP_PATH=%s\n' "$APP_ROOT"
   printf 'RUNTIME_PATH=%s\n' "$RUNTIME_ROOT"
   printf 'DATA_PATH=%s\n' "$DATA_ROOT"
   printf 'CONFIG_PATH=%s\n' "$CONFIG_PATH"
+  printf 'APP_BYTES=%s\n' "$app_bytes"
   printf 'RUNTIME_BYTES=%s\n' "$runtime_bytes"
+  printf 'PROGRAM_BYTES=%s\n' "$program_bytes"
   printf 'DATA_BYTES=%s\n' "$data_bytes"
   printf 'CONFIG_BYTES=%s\n' "$config_bytes"
   printf 'TOTAL_BYTES=%s\n' "$total"
@@ -180,6 +188,7 @@ uninstall() {
   esac
 
   DATA_ROOT="$(resolve_data_root)"
+  validate_removal_target "$APP_ROOT" "應用程式"
   validate_removal_target "$RUNTIME_ROOT" "程式與模型"
   validate_removal_target "$DATA_ROOT" "家庭資料"
   validate_removal_target "$(dirname "$CONFIG_PATH")" "設定"
@@ -202,6 +211,10 @@ uninstall() {
       tccutil reset "$service" com.familyrecorder.menubar >/dev/null 2>&1 || true
     done
   fi
+  if [[ -x "$LSREGISTER" && -d "$APP_ROOT" ]]; then
+    "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
+  fi
+  move_into "$APP_ROOT" "$trash_session/應用程式"
   move_into "$RUNTIME_ROOT" "$trash_session/程式與模型"
 
   printf 'UNINSTALL_OK=1\n'

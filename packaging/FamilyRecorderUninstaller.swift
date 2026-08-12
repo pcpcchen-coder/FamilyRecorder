@@ -250,12 +250,12 @@ private final class UninstallerDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let totalSize = self.formattedBytes(self.inspection["TOTAL_BYTES"])
-            let runtimeSize = self.formattedBytes(self.inspection["RUNTIME_BYTES"])
+            let programSize = self.formattedBytes(self.inspection["PROGRAM_BYTES"])
             let dataSize = self.formattedBytes(self.inspection["DATA_BYTES"])
             let configSize = self.formattedBytes(self.inspection["CONFIG_BYTES"])
             self.installedStatus.stringValue = "總計約 \(totalSize)"
             self.installedStatus.textColor = .labelColor
-            self.runtimeStatus.stringValue = "程式與 Whisper 模型：\(runtimeSize)"
+            self.runtimeStatus.stringValue = "App、程式元件與 Whisper 模型：\(programSize)"
             self.dataStatus.stringValue = "家庭錄音與紀錄：\(dataSize)"
             self.configStatus.stringValue = "設定：\(configSize)"
             self.uninstallButton.isEnabled = true
