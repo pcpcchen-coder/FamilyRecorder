@@ -28,6 +28,7 @@ def _load_template(name: str) -> dict[str, object]:
 
 def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     info = plistlib.loads((ROOT / "menubar" / "Info.plist").read_bytes())
+    entitlements = plistlib.loads((ROOT / "menubar" / "FamilyRecorder.entitlements").read_bytes())
 
     assert info["CFBundleDisplayName"] == "FamilyRecorder"
     assert info["CFBundleName"] == "FamilyRecorder"
@@ -35,6 +36,10 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert info["CFBundleIdentifier"] == APP_BUNDLE_ID
     assert info["LSUIElement"] is False
     assert "FamilyRecorder" in info["NSMicrophoneUsageDescription"]
+    assert entitlements["com.apple.security.device.audio-input"] is True
+
+    installer = (ROOT / "scripts" / "install_menubar.sh").read_text(encoding="utf-8")
+    assert '--entitlements "$ENTITLEMENTS"' in installer
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:

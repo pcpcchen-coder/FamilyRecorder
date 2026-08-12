@@ -615,6 +615,8 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 
 **LaunchAgent 沒收到聲音**：先使用「第一次硬體 bring-up」中的 `FamilyRecorder --service listener-once` 指令測試；檢查「系統設定 → 隱私權與安全性 → 麥克風」中 `FamilyRecorder.app` 已開啟，以及 `listener.error.log`。macOS 麥克風權限是每台機器的互動授權，安裝腳本不能替你繞過。
 
+**麥克風 App 列表沒有 FamilyRecorder**：升級至 0.14.1 或更新版本並重跑 `install_menubar.sh`。新版簽章包含 Hardened Runtime 所需的 Audio Input entitlement，首次啟動會直接送出 macOS 原生授權請求；按「允許」後 `FamilyRecorder.app` 才會出現在列表。若是從 0.14.0 升級，請完整結束並重新啟動 FamilyRecorder，讓背景 listener 重新讀取授權。
+
 **系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 
 **一直被 VAD 略過**：查看 log 的 RMS、software speech ratio、XVF3800 Speech Energy 與 `captures.gate_reason`。先以 software VAD 的 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。若 Speech Energy 永遠是 0，先跑 `doctor` 並對麥克風持續自然說話，不要把系統喇叭回音當成可靠近端測試。

@@ -259,11 +259,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         refreshStatus(rebuildMenu: true)
         if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            // A first-run foreground explanation makes the following macOS TCC
-            // sheet reliable and gives the user context before they decide.
+            // Request through AVFoundation immediately. An app is not added to
+            // System Settings' microphone list until this native request is
+            // actually made, so a separate explanatory alert can leave a
+            // menu-bar-only launch looking installed but absent from the list.
             NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async { [weak self] in
-                self?.showInitialMicrophoneAuthorization()
+                self?.handleMicrophoneAuthorizationResult()
             }
         } else {
             NSApp.setActivationPolicy(.accessory)
@@ -277,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func handleMicrophoneAuthorizationResult() {
         requestMicrophoneAccess { [weak self] granted in
             guard let self else { return }
+            NSApp.setActivationPolicy(.accessory)
             if !granted {
                 self.updateStatusIcon(
                     symbol: "mic.slash.circle.fill",
@@ -284,38 +288,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
             } else if self.currentStatus?.listenerRunning == false {
                 _ = self.restartListener()
-            }
-        }
-    }
-
-    private func showInitialMicrophoneAuthorization() {
-        let alert = NSAlert()
-        alert.messageText = "讓 FamilyRecorder 開始聆聽"
-        alert.informativeText =
-            "下一步 macOS 會詢問麥克風權限。允許後，FamilyRecorder 才能使用 XVF3800；音訊仍只在這台 Mac 上處理。"
-        alert.addButton(withTitle: "繼續並允許麥克風")
-        alert.addButton(withTitle: "稍後")
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else {
-            NSApp.setActivationPolicy(.accessory)
-            updateStatusIcon(
-                symbol: "mic.slash.circle.fill",
-                tooltip: "FamilyRecorder 尚未取得麥克風權限"
-            )
-            return
-        }
-        requestMicrophoneAccess { [weak self] granted in
-            NSApp.setActivationPolicy(.accessory)
-            guard let self else { return }
-            if granted {
-                if self.currentStatus?.listenerRunning == false {
-                    _ = self.restartListener()
-                }
-            } else {
-                self.updateStatusIcon(
-                    symbol: "mic.slash.circle.fill",
-                    tooltip: "FamilyRecorder 需要麥克風權限"
-                )
             }
         }
     }

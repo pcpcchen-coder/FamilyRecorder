@@ -19,6 +19,7 @@ PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.menubar.plist"
 LISTENER_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.listener.plist"
 SUMMARY_PLIST="$HOME/Library/LaunchAgents/com.familyrecorder.summary.plist"
 TEMPLATE="$REPO_ROOT/launchd/com.familyrecorder.menubar.plist.in"
+ENTITLEMENTS="$REPO_ROOT/menubar/FamilyRecorder.entitlements"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
@@ -64,7 +65,8 @@ xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -fram
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
-codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP_ROOT"
+codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS" \
+  --sign "$SIGN_IDENTITY" "$APP_ROOT"
 plutil -lint "$APP_ROOT/Contents/Info.plist"
 
 # Register the bundle before loading the associated LaunchAgents so macOS can
