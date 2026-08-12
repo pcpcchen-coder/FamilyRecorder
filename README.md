@@ -618,6 +618,8 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 
 **麥克風 App 列表沒有 FamilyRecorder**：升級至 0.14.3 或更新版本並重跑 `install_menubar.sh`、`install_launchd.sh`。新版把主 App 安裝到標準的 `/Applications/FamilyRecorder.app`、包含 Hardened Runtime 所需的 Audio Input entitlement，並自動移除舊版位於 Application Support 或 `~/Applications` 的重複 App。首次啟動按下 macOS 的「允許」後，完整重開系統設定即可看到 `FamilyRecorder.app`；模型、逐字稿與錄音資料不會因遷移而移動。
 
+**按「連接／選擇預設 Google Calendar」沒有出現授權視窗**：升級至 0.14.4 或更新版本。0.14.3 的 Hardened Runtime 簽章遺漏 Calendar entitlement，macOS 會在顯示授權視窗之前拒絕請求。0.14.4 補齊 entitlement，且選單會把已設定但失去系統權限的狀態顯示為「需要重新授權」；Google 帳號、既有事件與 FamilyRecorder 的日曆對應設定不會被刪除。
+
 **系統設定仍顯示 `python3.12` 或 `family-recorder`**：這是 0.8.0 以前直接啟動 Python worker 留下的歷史項目。先確認已升級到 0.9.0、重跑 `install_menubar.sh`、`install_launchd.sh` 與 `install_daily_summary.sh`，再把舊項目的切換鈕關閉；目前使用中的麥克風項目應是 `FamilyRecorder.app`，背景工作則顯示 `FamilyRecorder`。不要為了清掉一列歷史紀錄而重設所有 App 的麥克風權限。
 
 **一直被 VAD 略過**：查看 log 的 RMS、software speech ratio、XVF3800 Speech Energy 與 `captures.gate_reason`。先以 software VAD 的 `-55 dBFS`／`0.02` 測試，再逐步調嚴；也可用 placement test 比較實際位置。若 Speech Energy 永遠是 0，先跑 `doctor` 並對麥克風持續自然說話，不要把系統喇叭回音當成可靠近端測試。

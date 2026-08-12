@@ -271,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
     private var runningProcesses: [Process] = []
     private var autoCreatingCalendarEventIDs: Set<Int> = []
+    private var lastCalendarAccessError: String?
 
     init(programPath: String, configPath: String, uninstallerPath: String) {
         self.programPath = programPath
@@ -320,6 +321,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
             } else if self.currentStatus?.listenerRunning == false {
                 _ = self.restartListener()
+            }
+            self.restoreCalendarAccessIfNeeded()
+        }
+    }
+
+    private func restoreCalendarAccessIfNeeded() {
+        guard currentStatus?.calendarEnabled == true,
+              EKEventStore.authorizationStatus(for: .event) == .notDetermined else {
+            return
+        }
+        // An update can invalidate the previous TCC decision even though the
+        // selected Google calendar remains configured. Ask from the normally
+        // launched app so macOS attributes the permission to FamilyRecorder.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        requestCalendarAccess { [weak self] granted in
+            NSApp.setActivationPolicy(.accessory)
+            if !granted {
+                self?.showCalendarPermissionAlert()
             }
         }
     }
@@ -777,16 +797,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let calendarItem = item("Google Calendar")
         let calendarMenu = NSMenu()
         let defaultName = status.calendarDefaultName.isEmpty ? "尚未選擇" : status.calendarDefaultName
+        let calendarAccessIsAvailable = hasCalendarWriteAccess()
+        let connectionStatus: String
+        if status.calendarEnabled && !calendarAccessIsAvailable {
+            connectionStatus = "需要重新授權 · 預設：\(defaultName)"
+        } else if status.calendarEnabled {
+            connectionStatus = "已開啟 · 預設：\(defaultName)"
+        } else {
+            connectionStatus = "尚未開啟 · 預設：\(defaultName)"
+        }
         calendarMenu.addItem(
-            item(
-                status.calendarEnabled
-                    ? "已開啟 · 預設：\(defaultName)"
-                    : "尚未開啟 · 預設：\(defaultName)",
-                enabled: false
-            )
+            item(connectionStatus, enabled: false)
         )
         calendarMenu.addItem(
-            item("連接／選擇預設 Google Calendar…", action: #selector(chooseDefaultCalendar))
+            item(
+                calendarAccessIsAvailable
+                    ? "連接／選擇預設 Google Calendar…"
+                    : "重新授權／選擇 Google Calendar…",
+                action: #selector(chooseDefaultCalendar)
+            )
         )
         if !status.calendarDefaultID.isEmpty {
             calendarMenu.addItem(
@@ -1067,8 +1096,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func requestCalendarAccess(completion: @escaping (Bool) -> Void) {
         NSApp.activate(ignoringOtherApps: true)
-        let finished: (Bool, Error?) -> Void = { [weak self] granted, _ in
+        lastCalendarAccessError = nil
+        let finished: (Bool, Error?) -> Void = { [weak self] granted, error in
             DispatchQueue.main.async {
+                self?.lastCalendarAccessError = error?.localizedDescription
                 if granted {
                     self?.refreshGoogleCalendars()
                 }
@@ -1085,8 +1116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showCalendarPermissionAlert() {
         let alert = NSAlert()
         alert.messageText = "FamilyRecorder 需要行事曆權限"
-        alert.informativeText =
-            "請在「系統設定 → 隱私權與安全性 → 行事曆」允許 FamilyRecorder，才能列出日曆並在確認後建立事件。"
+        if let error = lastCalendarAccessError, !error.isEmpty {
+            alert.informativeText =
+                "macOS 拒絕了行事曆授權請求：\n\n\(error)\n\n請確認安裝的是最新版 FamilyRecorder，再到「系統設定 → 隱私權與安全性 → 行事曆」檢查。"
+        } else {
+            alert.informativeText =
+                "請在「系統設定 → 隱私權與安全性 → 行事曆」允許 FamilyRecorder，才能列出日曆並建立事件。"
+        }
         alert.addButton(withTitle: "打開系統設定")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)

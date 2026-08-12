@@ -37,6 +37,7 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert info["LSUIElement"] is False
     assert "FamilyRecorder" in info["NSMicrophoneUsageDescription"]
     assert entitlements["com.apple.security.device.audio-input"] is True
+    assert entitlements["com.apple.security.personal-information.calendars"] is True
 
     installer = (ROOT / "scripts" / "install_menubar.sh").read_text(encoding="utf-8")
     assert '--entitlements "$ENTITLEMENTS"' in installer
@@ -53,6 +54,10 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert "AVCaptureAudioDataOutput" in source
     assert "AVAudioApplication.shared.recordPermission" in source
     assert "AVAudioApplication.requestRecordPermission" in source
+    assert "需要重新授權" in source
+    assert "lastCalendarAccessError" in source
+    assert "restoreCalendarAccessIfNeeded" in source
+    assert "EKEventStore.authorizationStatus(for: .event) == .notDetermined" in source
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:
