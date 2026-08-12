@@ -5,7 +5,7 @@ RESOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD_ROOT="$RESOURCE_ROOT/FamilyRecorderPayload"
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
-APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-/Applications/FamilyRecorder.app}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.codex/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 log() {

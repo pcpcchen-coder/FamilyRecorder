@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
-APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-/Applications/FamilyRecorder.app}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
 LAUNCH_AGENTS_ROOT="${FAMILYRECORDER_LAUNCH_AGENTS_ROOT:-$HOME/Library/LaunchAgents}"
 TRASH_ROOT="${FAMILYRECORDER_TRASH_ROOT:-$HOME/.Trash}"

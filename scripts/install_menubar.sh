@@ -10,8 +10,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_ROOT="${FAMILYRECORDER_RUNTIME_ROOT:-$HOME/Library/Application Support/FamilyRecorder}"
 CONFIG_PATH="${FAMILYRECORDER_CONFIG:-$HOME/.config/familyrecorder/config.yaml}"
 PROGRAM="$RUNTIME_ROOT/venv/bin/family-recorder"
-APP_ROOT="${FAMILYRECORDER_APP_ROOT:-$HOME/Applications/FamilyRecorder.app}"
-LEGACY_APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"
+APP_ROOT="${FAMILYRECORDER_APP_ROOT:-/Applications/FamilyRecorder.app}"
+LEGACY_RUNTIME_APP_ROOT="$RUNTIME_ROOT/FamilyRecorder.app"
+LEGACY_USER_APP_ROOT="$HOME/Applications/FamilyRecorder.app"
 APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/FamilyRecorder"
 UNINSTALLER_ROOT="$RUNTIME_ROOT/解除安裝 FamilyRecorder.app"
 UNINSTALLER_EXECUTABLE="$UNINSTALLER_ROOT/Contents/MacOS/FamilyRecorderUninstaller"
@@ -61,11 +62,14 @@ mkdir -p \
   "$LOG_DIR"
 if [[ -x "$LSREGISTER" ]]; then
   [[ ! -d "$APP_ROOT" ]] || "$LSREGISTER" -u "$APP_ROOT" >/dev/null 2>&1 || true
-  [[ ! -d "$LEGACY_APP_ROOT" ]] || \
-    "$LSREGISTER" -u "$LEGACY_APP_ROOT" >/dev/null 2>&1 || true
+  for legacy_app_root in "$LEGACY_RUNTIME_APP_ROOT" "$LEGACY_USER_APP_ROOT"; do
+    [[ ! -d "$legacy_app_root" ]] || \
+      "$LSREGISTER" -u "$legacy_app_root" >/dev/null 2>&1 || true
+  done
 fi
 rm -f "$APP_ROOT/Contents/MacOS/FamilyRecorderMenuBar"
-xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFoundation -framework EventKit \
+xcrun swiftc -O -swift-version 5 -framework AppKit -framework AVFAudio \
+  -framework AVFoundation -framework EventKit \
   "$REPO_ROOT/menubar/FamilyRecorderMenuBar.swift" \
   -o "$APP_EXECUTABLE"
 install -m 644 "$REPO_ROOT/menubar/Info.plist" "$APP_ROOT/Contents/Info.plist"
@@ -83,18 +87,28 @@ fi
 if command -v mdimport >/dev/null 2>&1; then
   mdimport -i "$APP_ROOT" >/dev/null 2>&1 || true
 fi
-
-# Releases before 0.14.2 placed the bundle inside Application Support. That
-# hidden duplicate can keep stale Spotlight/TCC identity metadata alive, so it
-# must be removed after the replacement app has been signed and registered.
-if [[ "$LEGACY_APP_ROOT" != "$APP_ROOT" && -d "$LEGACY_APP_ROOT" ]]; then
-  if [[ "$LEGACY_APP_ROOT" != "$RUNTIME_ROOT/FamilyRecorder.app" ]]; then
-    echo "Refusing to remove an unexpected legacy app path: $LEGACY_APP_ROOT" >&2
-    exit 1
-  fi
-  rm -rf -- "$LEGACY_APP_ROOT"
-  echo "Removed the legacy hidden FamilyRecorder.app"
+# Remove only the retired pre-0.9.0 identity. Keeping its TCC row alongside the
+# current bundle can make System Settings hide the new app after refreshing.
+# Never reset com.familyrecorder.app during an ordinary upgrade.
+if command -v tccutil >/dev/null 2>&1; then
+  tccutil reset Microphone com.familyrecorder.menubar >/dev/null 2>&1 || true
 fi
+
+# Releases before 0.14.2 used Application Support and 0.14.2 briefly used the
+# per-user Applications folder. Remove those exact duplicates only after the
+# /Applications replacement has been signed, verified, indexed and registered.
+for legacy_app_root in "$LEGACY_RUNTIME_APP_ROOT" "$LEGACY_USER_APP_ROOT"; do
+  [[ "$legacy_app_root" == "$APP_ROOT" || ! -d "$legacy_app_root" ]] && continue
+  case "$legacy_app_root" in
+    "$RUNTIME_ROOT/FamilyRecorder.app"|"$HOME/Applications/FamilyRecorder.app") ;;
+    *)
+      echo "Refusing to remove an unexpected legacy app path: $legacy_app_root" >&2
+      exit 1
+      ;;
+  esac
+  rm -rf -- "$legacy_app_root"
+  echo "Removed legacy FamilyRecorder.app: $legacy_app_root"
+done
 
 xcrun swiftc -O -parse-as-library -swift-version 5 -framework AppKit \
   "$REPO_ROOT/packaging/FamilyRecorderUninstaller.swift" \
@@ -156,6 +170,12 @@ for service_plist in "$LISTENER_PLIST" "$SUMMARY_PLIST"; do
   [[ ! -f "$service_plist" ]] || plutil -lint "$service_plist"
 done
 
+# Open the installed bundle through Launch Services before registering the
+# LaunchAgent. This gives macOS a normal foreground app as the responsible
+# process for the first microphone request. The app has built-in default paths,
+# so no private runtime arguments are needed for this Finder-equivalent launch.
+open "$APP_ROOT"
+sleep 1
 launchctl bootstrap "gui/$UID" "$PLIST"
 if [[ "$LISTENER_WAS_LOADED" == true && -f "$LISTENER_PLIST" ]]; then
   launchctl bootstrap "gui/$UID" "$LISTENER_PLIST"

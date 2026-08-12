@@ -1,4 +1,5 @@
 import AppKit
+import AVFAudio
 import AVFoundation
 import Darwin
 import EventKit
@@ -7,6 +8,38 @@ import Foundation
 struct WhisperModel: Decodable {
     let name: String
     let path: String
+}
+
+private enum MicrophonePermissionState {
+    case notDetermined
+    case denied
+    case authorized
+}
+
+private func microphonePermissionState() -> MicrophonePermissionState {
+    if #available(macOS 14.0, *) {
+        switch AVAudioApplication.shared.recordPermission {
+        case .undetermined:
+            return .notDetermined
+        case .denied:
+            return .denied
+        case .granted:
+            return .authorized
+        @unknown default:
+            return .denied
+        }
+    }
+
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .notDetermined:
+        return .notDetermined
+    case .denied, .restricted:
+        return .denied
+    case .authorized:
+        return .authorized
+    @unknown default:
+        return .denied
+    }
 }
 
 struct DownloadableWhisperModel: Decodable {
@@ -258,11 +291,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             refreshGoogleCalendars()
         }
         refreshStatus(rebuildMenu: true)
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            // Request through AVFoundation immediately. An app is not added to
-            // System Settings' microphone list until this native request is
-            // actually made, so a separate explanatory alert can leave a
-            // menu-bar-only launch looking installed but absent from the list.
+        if microphonePermissionState() == .notDetermined {
+            // Ask through the native recording-permission API immediately. A
+            // menu-bar-only app is not added to System Settings' microphone
+            // list until it actually makes this request.
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async { [weak self] in
@@ -1764,19 +1796,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func requestMicrophoneAccess(completion: @escaping (Bool) -> Void) {
         NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted:
+                registerNativeMicrophoneUse(completion: completion)
+            case .undetermined:
+                AVAudioApplication.requestRecordPermission { granted in
+                    guard granted else {
+                        DispatchQueue.main.async { completion(false) }
+                        return
+                    }
+                    self.registerNativeMicrophoneUse(completion: completion)
+                }
+            case .denied:
+                completion(false)
+            @unknown default:
+                completion(false)
+            }
+            return
+        }
+
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            completion(true)
+            registerNativeMicrophoneUse(completion: completion)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
-                DispatchQueue.main.async {
-                    completion(granted)
+                guard granted else {
+                    DispatchQueue.main.async { completion(false) }
+                    return
                 }
+                self.registerNativeMicrophoneUse(completion: completion)
             }
         case .denied, .restricted:
             completion(false)
         @unknown default:
             completion(false)
+        }
+    }
+
+    private func registerNativeMicrophoneUse(completion: @escaping (Bool) -> Void) {
+        // The long-running recorder is a Python child process. Exercise the
+        // audio device once in the signed native app after first authorization
+        // so macOS TCC records FamilyRecorder itself as the microphone client
+        // and keeps it visible in System Settings.
+        guard let device = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: device) else {
+            DispatchQueue.main.async { completion(true) }
+            return
+        }
+        let session = AVCaptureSession()
+        let output = AVCaptureAudioDataOutput()
+        session.beginConfiguration()
+        if session.canAddInput(input) {
+            session.addInput(input)
+        }
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+        }
+        session.commitConfiguration()
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+            Thread.sleep(forTimeInterval: 0.5)
+            session.stopRunning()
+            DispatchQueue.main.async { completion(true) }
         }
     }
 
@@ -2091,7 +2173,7 @@ func authorizeMicrophoneForListener() -> Bool {
     // Only the foreground menu app asks for TCC access. Background listener
     // launches merely read the decision so two simultaneous system prompts can
     // never deadlock a first install.
-    AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    microphonePermissionState() == .authorized
 }
 
 func runRecorderService(
@@ -2160,15 +2242,31 @@ if let service = argumentValue("--service") {
     )
 }
 
-guard let programPath = argumentValue("--program"),
-      let configPath = argumentValue("--config"),
-      let uninstallerPath = argumentValue("--uninstaller") else {
-    FileHandle.standardError.write(
-        Data(
-            "Usage: FamilyRecorder --program PATH --config PATH --uninstaller PATH\n".utf8
-        )
-    )
-    exit(2)
+let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+let runtimeDirectory = homeDirectory
+    .appendingPathComponent("Library/Application Support/FamilyRecorder", isDirectory: true)
+let programPath = argumentValue("--program")
+    ?? runtimeDirectory.appendingPathComponent("venv/bin/family-recorder").path
+let configPath = argumentValue("--config")
+    ?? homeDirectory.appendingPathComponent(".config/familyrecorder/config.yaml").path
+let uninstallerPath = argumentValue("--uninstaller")
+    ?? runtimeDirectory.appendingPathComponent("解除安裝 FamilyRecorder.app").path
+
+// The installer first opens the standard /Applications bundle through Launch
+// Services so macOS attributes the native microphone request to FamilyRecorder
+// itself. The LaunchAgent is registered immediately afterwards; if that second
+// GUI instance starts in the same session, exit successfully and leave the
+// foreground instance in charge. Background --service processes are handled
+// above and never take this branch.
+let currentProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+let anotherMenuInstanceIsRunning = NSRunningApplication.runningApplications(
+    withBundleIdentifier: "com.familyrecorder.app"
+).contains { application in
+    application.processIdentifier != currentProcessIdentifier
+        && application.activationPolicy != .prohibited
+}
+if anotherMenuInstanceIsRunning {
+    exit(0)
 }
 
 let application = NSApplication.shared
