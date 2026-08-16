@@ -46,6 +46,8 @@ XVF3800 / XMOS
 - 同步讀取 focused beam 1、focused beam 2、free-running beam、auto-selected beam 四組 Speech Energy；與 software VAD 共同決定是否轉錄，原始值及共同毫秒 offset 全留在本機 SQLite。
 - 選單列可開關方向判斷、測試目前方向，並讓使用者站在指定位置說話，把該方向一鍵校準為房間的 `0° 正前方`。
 - Google Calendar 為預設行事曆 provider：每位家庭成員可綁定多個日曆並指定預設；可選擇逐筆確認，或一次同意後讓每次摘要自動加入。
+- 智慧家庭狀態日誌 foundation：provider-neutral 模型、SQLite、去重／時間合併、fake provider、companion bridge 邊界與雙層隱私 allowlist；只讀狀態，不提供遠端家電控制。
+- 每日摘要可加入本機整理的家電事件，例如「07:31–07:36 咖啡機運作」；只有使用者逐項允許的裝置屬性會成為文字，完整 home state、憑證與音訊都不會送出。
 - Mic placement test：A/B/C 等多個位置朗讀同一組 20 句固定句，比較 RMS、SNR、speech ratio、Whisper 文字與 CER（字元錯誤率）。
 
 XMOS 官方文件指出，標準 UA 韌體會以 `XMOS XVF3800 Voice Processor` 顯示，USB Audio 可固定為 16 kHz 或 48 kHz；本專案因此同時支援名稱比對與取樣率 fallback。方向角與 Speech Energy 不是 WAV 內的額外聲道，而是另外讀取 USB control command。Seeed 官方 routing 定義中，category `6` 是 processed beamformed、source `3` 是 auto-selected best beam；category `8` 的 source `0/1` 目前複製這個輸出。參考：[XVF3800 硬體／UA 設定](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/user_guide/02_setting_up_the_hardware.html)、[XVF3800 音訊處理管線](https://www.xmos.com/documentation/XM-014888-PC/html/modules/fwk_xvf/doc/datasheet/03_audio_pipeline.html)、[Seeed XVF3800 Host Control](https://github.com/respeaker/reSpeaker_XVF3800_USB_4MIC_ARRAY/blob/master/host_control/README.md)。
@@ -240,6 +242,11 @@ sqlite3 "$HOME/xvf3800-listener-data/listener.sqlite3" \
 | `calendar.default_calendar_id` | 空字串 | 全家事件或無法判斷成員時使用的預設日曆 |
 | `calendar.member_calendar_ids` | `{}` | 每位家庭成員可使用的多個 Google Calendar；由選單設定 |
 | `calendar.member_default_calendar_ids` | `{}` | 每位成員在 AI 無法精確分類時的回退日曆 |
+| `smart_home.enabled` | `false` | 開啟唯讀智慧家庭事件基礎；沒有 allowlist 時仍不記錄屬性 |
+| `smart_home.record_allowlist` | `{}` | 可寫入本機 SQLite 的 `<account>/<device>` 與 provider capability |
+| `smart_home.summary_allowlist` | `{}` | 可轉成純文字進摘要的子集；不能超出本機記錄 allowlist |
+| `smart_home.high_frequency_min_interval_seconds` | `300` | 高頻數值狀態合併的最短間隔，避免淹沒資料庫 |
+| `smart_home.max_clock_skew_seconds` | `300` | provider 時間偏差超過此值時改採本機觀測時間並標記 |
 | `summary.model` | 空字串 | 沿用 ChatGPT 帳號目前可用的 Codex 預設模型；填值才固定模型 |
 | `summary.codex_binary_path` | `codex` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `summary.timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
@@ -330,6 +337,25 @@ codex login status
 隱私邊界是程式結構上的限制：`summary` 指令只開啟 `transcripts/YYYY-MM-DD.md`，不會讀取 `audio/` 或 `speaker-profiles/`。逐字稿透過 stdin 傳給 Codex，不出現在 process arguments；若超過 `summary.max_input_chars`，仍只分段傳送文字。每段先保留事件時間、可能說話者與不確定性，最後才把同一天的中間整理去重合併。
 
 請注意，逐字稿文字本身可能包含敏感內容、近似人別姓名與家庭事件；啟用前應先檢視 prompt、ChatGPT 資料設定與家庭共識。FamilyRecorder 不會把聲音、聲音特徵、SQLite 或本機檔案路徑附加到摘要請求。
+
+## 智慧家庭狀態（第一階段 foundation）
+
+目前已完成不需要真實帳號或網路的唯讀基礎。選單會顯示 provider 連線、最後同步、錯誤／
+重新授權，以及 home／room／device／capability 階層；每個屬性有兩個獨立選項：「本機記錄」
+與「允許文字進摘要」。後者必須先開前者，預設全部關閉。移除 provider 會停止本機連線並
+清除 active allowlist，既有本機歷史仍保留。
+
+Google Home 目前不能由這個 native macOS App 直接使用官方 SDK。官方 Home APIs 只提供
+Android/iOS SDK；因此本階段只建立 signed mobile companion 的 credential-free bridge contract，
+沒有 Google 登入或網路 listener，也沒有使用任何私有 endpoint。Apple Home 同樣沒有 native
+macOS HomeKit framework availability；Tuya 雖可從 macOS 使用官方 Cloud OpenAPI，仍需使用者
+建立正確區域的 cloud project、授權帳號並決定 trial／付費方案。FamilyRecorder 不會代替使用者
+做這些外部變更。
+
+完整官方介面研究、能力矩陣、companion schema、最短授權流程與離線驗收見
+[`docs/smart-home-integration.md`](docs/smart-home-integration.md)；資料範圍與 Keychain 規則見
+[`docs/smart-home-privacy.md`](docs/smart-home-privacy.md)。這項功能和「從聲音辨識家電」保持分離，
+未來只能以時間戳交叉驗證，不會讓 home state 覆蓋或偽造語音逐字稿。
 
 ## Google Calendar 候選事件
 
@@ -548,6 +574,12 @@ Speech Energy 的 auto-selected beam 非零比例可在 WebRTC VAD 漏掉較輕�
 
 `summaries` 表以 `summary_date` 為主鍵，另存摘要檔路徑、實際選用的模型標記與建立時間。重新整理同一天時會更新該列。Markdown 摘要中的事件時間仍以逐字稿標題為準，SQLite 的 `created_at` 只是摘要產生時間。
 
+智慧家庭資料使用同一個 SQLite：`home_provider_accounts`、`home_structures`、`home_rooms`、
+`home_devices`、`home_capabilities`、`home_state_snapshots`、`home_state_events`、
+`home_sync_cursors`、`home_connection_errors`。未知 capability 的原始 key/value 不會遺失；
+OAuth token、client secret 與 Tuya secret 不得寫入這些表或 YAML，只能由未來的正式 adapter
+保存在 macOS Keychain。
+
 手動執行 retention：
 
 ```bash
@@ -572,7 +604,7 @@ Speech Energy 的 auto-selected beam 非零比例可在 WebRTC VAD 漏掉較輕�
 
 產物為 `dist/FamilyRecorder-<版本>-arm64.dmg` 與對應的 `.sha256`。若要公開散布且不顯示 Gatekeeper 未公證警告，發行者還需使用 Developer ID Application 憑證簽署並送 Apple notarization；一般 Apple Development 憑證不等同公開發行公證。
 
-CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamformed/raw 判定、四束 float32 Speech Energy、software/hardware VAD 融合、共同 time series、雙聲道 downmix／取樣率轉換、Whisper CLI、SQLite migration／Markdown、人聲近似分類、retention、純文字摘要與 CER 報告都有隔離測試。發佈前仍應在 XVF3800 實機執行 `diagnose-beamforming`、`doctor` 與語音／靜音採樣。
+CI 不直接依賴實體硬體或智慧家庭帳號；裝置選擇、routing response 解碼、beamformed/raw 判定、四束 float32 Speech Energy、software/hardware VAD 融合、共同 time series、雙聲道 downmix／取樣率轉換、Whisper CLI、SQLite migration／Markdown、人聲近似分類、retention、純文字摘要、智慧家庭正規化／去重／隱私 allowlist／重試與 CER 報告都有隔離測試。發佈前仍應在 XVF3800 實機執行 `diagnose-beamforming`、`doctor` 與語音／靜音採樣；真實 provider 則要在使用者完成外部授權後另做端到端驗收。
 
 ## 驗收清單
 
@@ -607,6 +639,10 @@ CI 不直接依賴實體硬體；裝置選擇、routing response 解碼、beamfo
 29. 以硬體 Speech Energy 0%、software VAD 約 10–25%、SNR 低於 10 dB 的固定噪音測試，`captures.gate_reason` 為 `hallucination_filter:hardware_silence`，不產生逐字稿。
 30. 對兩個相隔 30 秒的相同長句測試，第一筆可接受，第二筆寫入 `transcription_audits.decision='filtered'` 且不追加 Markdown；「好／嗯」等短句不受此規則影響。
 31. 選單可顯示今日攔截數，寬鬆／平衡／嚴格與進階門檻修改後會保存 YAML 並成功重啟 listener。
+32. fake home fixture 不需網路即可建立 provider inventory、事件、cursor 與 connection health；第二次匯入不重複事件，高頻風速合併成 bounded snapshot。
+33. 未勾選的裝置屬性不進 SQLite；只在 `record_allowlist` 而不在 `summary_allowlist` 的原始／未知狀態不出現在 Codex stdin。
+34. 測試日摘要顯示 `07:31–07:36｜廚房／咖啡機運作` 與 `19:08–19:26｜廚房／抽油煙機運作`，且不把事件歸因給說話者或改寫逐字稿。
+35. companion bridge 會拒絕頂層或巢狀 credential，provider clock skew 超標時改用本機觀測時間；provider retry 使用有上限的 exponential backoff。
 
 ## 常見問題
 

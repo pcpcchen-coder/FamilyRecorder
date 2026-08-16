@@ -18,13 +18,47 @@ Every completed chunk, including one rejected as silence, is indexed in `capture
 
 Speaker and direction results remain independent evidence. A stable direction can corroborate a voice label and reveal changes within one 30-second chunk, but it cannot map a location to a person. Multiple significant direction clusters are retained as `multiple`; they are not collapsed to the primary voice label.
 
+## Read-only smart-home state journal
+
+`family_recorder.home` is independent of the audio listener and appliance sound classifier. A
+provider-neutral `HomeProvider` exposes read-only sync and subscription operations; common models retain
+accounts, structures, rooms, devices, capabilities, snapshots, events, cursors, and connection health.
+There is deliberately no device-control method. Provider failures therefore cannot block recording,
+Whisper, speaker/direction analysis, Calendar, or retention.
+
+The migration adds provider accounts, inventory, capabilities, state snapshots/events, sync cursors, and
+connection errors to the existing SQLite file. Each record keeps source, provider and observed timestamps,
+time quality, timezone, raw value/payload, optional normalized state, and a dedupe key. Unknown capabilities
+remain lossless. Excessive provider clock skew falls back to the local observation time; identical state is
+debounced, state changes close the preceding interval, and high-frequency numeric measurements coalesce to
+bounded snapshots.
+
+Privacy selection occurs twice. `record_allowlist` controls which capabilities enter SQLite;
+`summary_allowlist` must be its subset and is evaluated again when rendering each daily timeline. The second
+check means disabling summary sharing also excludes previously recorded raw state from future requests. The
+renderer emits only useful local text such as `07:31–07:36｜廚房／咖啡機運作`; raw provider data,
+credentials, and complete home inventory never enter the summary path.
+
+Official Google Home APIs currently provide Android/iOS SDKs, not a native macOS SDK. The foundation
+therefore implements only a versioned, credential-free companion payload boundary plus fake fixtures. A
+future signed iOS/Android companion owns Google sign-in and Home API access; the Mac never receives its OAuth
+tokens. The same provider contract can later host Apple Home, Tuya, Matter, or Home Assistant adapters.
+Detailed platform decisions and user-controlled authorization steps are in
+[`smart-home-integration.md`](smart-home-integration.md); the enforceable data boundary is in
+[`smart-home-privacy.md`](smart-home-privacy.md).
+
 ## Cloud summary
 
-`DailySummaryRunner` accepts a calendar date and opens only the corresponding Markdown file under `transcripts/`. It pipes that text to the official Codex CLI, which reuses its own saved “Sign in with ChatGPT” session. FamilyRecorder never reads the Codex authentication file and has no API-key integration. It writes the returned text under `summaries/` and indexes it in SQLite.
+`DailySummaryRunner` accepts a calendar date and opens only the corresponding Markdown file under `transcripts/`, plus the locally rendered smart-home event timeline if its independent summary allowlist permits events for that date. It pipes only those text sections to the official Codex CLI, which reuses its own saved “Sign in with ChatGPT” session. FamilyRecorder never reads the Codex authentication file and has no API-key integration. It writes the returned text under `summaries/` and indexes it in SQLite.
 
 Transcript headings carry local chunk ranges such as `19:40:00–19:40:30`. A mandatory time-output contract is appended in code independently of the configurable summary prompt. It requires minute-level approximate timestamps, a chronological event timeline, explicit `時間不明` markers, and forbids replacing source time with summary-generation time. The same contract is present in every partial request and the final merge, so chunking cannot silently discard chronology.
 
 The same request path appends independent speaker- and direction-output contracts. When a heading carries `可能：name`, `可能多人`, `不確定`, or a direction label, important timeline events, news, decisions, commitments, tasks, and ideas retain those source hints with explicitly uncertain wording. Separate household-member and direction/evidence sections group relevant content. Speaker and task owner remain distinct, direction alone cannot supply a missing name, and unlabeled or mixed segments cannot be assigned to a person. Long transcripts split only between complete `### time — speaker — direction` segments, so partial summarization cannot detach speech from its local evidence heading; the final merge receives both contracts again.
+
+A separate smart-home output contract labels the local device timeline as non-speech evidence. It forbids
+overwriting or fabricating transcript content, inferring presence or identity, or attributing an appliance
+state to a household member. A date may be summarized from allowlisted home events even when no speech was
+recorded, but the input still contains only locally rendered text.
 
 When Google Calendar candidates are enabled, calendar extraction is a separate second Codex request after the human-readable summary succeeds. That request uses `--output-schema` with a strict JSON Schema, receives only the summary and transcript text, and never creates an external event. A date without a known time becomes an all-day candidate; a date that cannot be resolved is rejected. Valid candidates are normalized and placed in SQLite as `pending`. The default path requires explicit per-event confirmation through EventKit. An optional `auto_create` path requires one explicit opt-in, after which the continuously running menu app notices pending rows and writes them through EventKit without repeated prompts. Each EventKit note carries the SQLite candidate ID so an interrupted status update can be deduplicated before retry. A failed or malformed extraction leaves existing pending candidates untouched and adds a visible warning to the Markdown summary.
 
@@ -58,4 +92,6 @@ New data roots contain a `.familyrecorder-data` ownership marker. The helper rej
 - Live cloud transcription
 - Uploading or remotely backing up raw audio
 - Acting on inferred tasks or reminders
+- Remote control of any smart-home device
+- Reverse-engineered or private smart-home endpoints
 - A web dashboard

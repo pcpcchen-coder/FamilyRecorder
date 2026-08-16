@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from family_recorder.config import AppConfig, SummaryConfig
+from family_recorder.home.timeline import render_home_timeline
 from family_recorder.storage import Storage
 
 
@@ -78,6 +79,16 @@ DIRECTION_OUTPUT_CONTRACT = """\
   絕對不可只靠方向替沒有音色標記的段落指定姓名。
 - 標示 `方向：多個` 的片段不得說成整段都由單一人物說出；若音色標記仍只有一人，請列入
   需要人工確認的片段，而不是忽略方向衝突。
+"""
+
+HOME_EVENT_OUTPUT_CONTRACT = """\
+智慧家庭狀態規則（所有摘要請固定遵守）：
+- `本機智慧家庭事件時間線` 是 FamilyRecorder 依使用者 allowlist 在本機整理的獨立狀態證據，
+  不是語音逐字稿，也不代表任何人說過、看見或操作過該家電。
+- 家電事件可以加入事件時間軸，但不得用它覆蓋、改寫、推測或補造語音逐字稿內容，
+  也不得只因家電狀態就推定某位家庭成員在場、說話或執行了動作。
+- 保留來源提供的開始／結束時間；若文字已標示「以本機觀測時間記錄」，必須保留此限制。
+- 只可使用提供的文字事件；不得要求或推測未提供的原始狀態、憑證、裝置資料或音訊。
 """
 
 TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
@@ -393,6 +404,7 @@ class DailySummaryRunner:
         prompt = (
             f"{instructions.strip()}\n\n{TIME_OUTPUT_CONTRACT}\n\n"
             f"{SPEAKER_OUTPUT_CONTRACT}\n\n{DIRECTION_OUTPUT_CONTRACT}\n\n"
+            f"{HOME_EVENT_OUTPUT_CONTRACT}\n\n"
             f"{DATA_BOUNDARY}\n\n"
             "--- FAMILYRECORDER TEXT START ---\n"
             f"{content.strip()}\n"
@@ -442,17 +454,34 @@ class DailySummaryRunner:
         target_date = target_date or previous_local_date()
         with Storage(self.config.storage) as storage:
             transcript_path = storage.transcript_path_for(target_date)
-            if not transcript_path.is_file():
-                raise SummaryError(f"No transcript exists for {target_date.isoformat()}")
-            transcript = transcript_path.read_text(encoding="utf-8").strip()
-            if not transcript:
-                raise SummaryError(f"Transcript for {target_date.isoformat()} is empty")
+            transcript = (
+                transcript_path.read_text(encoding="utf-8").strip()
+                if transcript_path.is_file()
+                else ""
+            )
+            home_timeline = render_home_timeline(
+                self.config.storage,
+                self.config.smart_home,
+                target_date,
+            )
+            if not transcript and not home_timeline:
+                raise SummaryError(
+                    f"No transcript or allowlisted smart-home events exist for "
+                    f"{target_date.isoformat()}"
+                )
 
-            parts = split_transcript(transcript, self.config.summary.max_input_chars)
+            source_sections = []
+            if transcript:
+                source_sections.append(f"## 本機語音逐字稿\n\n{transcript}")
+            if home_timeline:
+                source_sections.append(home_timeline)
+            summary_input = "\n\n".join(source_sections)
+
+            parts = split_transcript(summary_input, self.config.summary.max_input_chars)
             if len(parts) == 1:
                 summary = self._request(
                     self.config.summary.prompt,
-                    f"日期：{target_date.isoformat()}\n\n逐字稿：\n{parts[0]}",
+                    f"日期：{target_date.isoformat()}\n\n本機文字輸入：\n{parts[0]}",
                 )
             else:
                 partials = [

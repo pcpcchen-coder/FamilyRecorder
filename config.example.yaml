@@ -107,6 +107,32 @@ calendar:
   member_calendar_ids: {}
   member_default_calendar_ids: {}
 
+# Read-only smart-home state journal. Nothing is recorded or included in the
+# daily summary until the user explicitly selects each device capability.
+# Secrets and OAuth tokens must be stored in macOS Keychain; YAML contains only
+# a non-secret Keychain item reference. Google Home requires a signed iOS or
+# Android companion because the official Home APIs SDK does not target native
+# macOS. Keep accounts empty until the user completes that external setup.
+smart_home:
+  enabled: false
+  accounts: []
+  selected_structure_ids: []
+  selected_room_ids: []
+  # Keys use "<account-id>/<provider-device-id>". Values are provider capability
+  # keys exactly as discovered; unknown keys remain lossless in local SQLite.
+  record_allowlist: {}
+  # Must be a subset of record_allowlist. Only these locally rendered text
+  # events may be appended to the text sent to the daily summary.
+  summary_allowlist: {}
+  poll_interval_seconds: 60
+  debounce_seconds: 2.0
+  merge_gap_seconds: 120
+  high_frequency_min_interval_seconds: 300
+  max_clock_skew_seconds: 300
+  retry_initial_seconds: 2.0
+  retry_max_seconds: 300.0
+  retry_max_attempts: 5
+
 summary:
   enabled: true
   # Uses the official Codex CLI and its saved "Sign in with ChatGPT" session.

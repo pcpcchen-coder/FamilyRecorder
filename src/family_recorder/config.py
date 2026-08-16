@@ -148,6 +148,35 @@ class CalendarConfig:
     member_default_calendar_ids: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class HomeAccountConfig:
+    id: str
+    provider: str
+    display_name: str = ""
+    enabled: bool = True
+    transport: str = "subscription"
+    keychain_item_ref: str = ""
+    endpoint: str = ""
+
+
+@dataclass(frozen=True)
+class SmartHomeConfig:
+    enabled: bool = False
+    accounts: tuple[HomeAccountConfig, ...] = ()
+    selected_structure_ids: tuple[str, ...] = ()
+    selected_room_ids: tuple[str, ...] = ()
+    record_allowlist: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    summary_allowlist: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    poll_interval_seconds: int = 60
+    debounce_seconds: float = 2.0
+    merge_gap_seconds: int = 120
+    high_frequency_min_interval_seconds: int = 300
+    max_clock_skew_seconds: int = 300
+    retry_initial_seconds: float = 2.0
+    retry_max_seconds: float = 300.0
+    retry_max_attempts: int = 5
+
+
 DEFAULT_SUMMARY_PROMPT = """\
 你是家庭聲音日誌整理助手。只根據逐字稿內容整理，不得補造事件。
 輸出繁體中文 Markdown，列出事件時間軸、依可能說話者整理的家庭成員重點、
@@ -188,6 +217,7 @@ class AppConfig:
     speakers: SpeakerConfig = field(default_factory=SpeakerConfig)
     direction: DirectionConfig = field(default_factory=DirectionConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
+    smart_home: SmartHomeConfig = field(default_factory=SmartHomeConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     placement_test: PlacementTestConfig = field(default_factory=PlacementTestConfig)
 
@@ -289,6 +319,39 @@ def load_config(path: str | Path) -> AppConfig:
         }
     calendar = CalendarConfig(**calendar_values)
 
+    smart_home_values = _known_values(SmartHomeConfig, raw.get("smart_home", {}))
+    if "accounts" in smart_home_values:
+        account_values = smart_home_values["accounts"]
+        if not isinstance(account_values, list):
+            raise ValueError("smart_home.accounts must be a YAML list")
+        smart_home_values["accounts"] = tuple(
+            HomeAccountConfig(**_known_values(HomeAccountConfig, value))
+            for value in account_values
+            if isinstance(value, dict)
+        )
+        if len(smart_home_values["accounts"]) != len(account_values):
+            raise ValueError("smart_home.accounts entries must be YAML mappings")
+    for key in ("selected_structure_ids", "selected_room_ids"):
+        if key in smart_home_values:
+            values = smart_home_values[key]
+            if not isinstance(values, list):
+                raise ValueError(f"smart_home.{key} must be a YAML list")
+            smart_home_values[key] = tuple(str(value) for value in values)
+    for key in ("record_allowlist", "summary_allowlist"):
+        if key not in smart_home_values:
+            continue
+        mapping = smart_home_values[key]
+        if not isinstance(mapping, dict):
+            raise ValueError(f"smart_home.{key} must be a YAML mapping")
+        smart_home_values[key] = {
+            str(selection): tuple(str(capability) for capability in capabilities)
+            for selection, capabilities in mapping.items()
+            if isinstance(capabilities, list)
+        }
+        if len(smart_home_values[key]) != len(mapping):
+            raise ValueError(f"smart_home.{key} values must be YAML lists")
+    smart_home = SmartHomeConfig(**smart_home_values)
+
     summary = SummaryConfig(**_known_values(SummaryConfig, raw.get("summary", {})))
 
     placement_values = _known_values(PlacementTestConfig, raw.get("placement_test", {}))
@@ -308,6 +371,7 @@ def load_config(path: str | Path) -> AppConfig:
         speakers=speakers,
         direction=direction,
         calendar=calendar,
+        smart_home=smart_home,
         summary=summary,
         placement_test=placement,
     )
@@ -418,6 +482,58 @@ def validate_config(config: AppConfig) -> None:
     for member, calendar_id in config.calendar.member_default_calendar_ids.items():
         if calendar_id not in config.calendar.member_calendar_ids.get(member, ()):
             raise ValueError("each member default calendar must also be assigned to that member")
+    account_ids = [account.id for account in config.smart_home.accounts]
+    if any(not account_id or len(account_id) > 120 for account_id in account_ids):
+        raise ValueError("smart_home account IDs must contain 1 to 120 characters")
+    if len(account_ids) != len(set(account_ids)):
+        raise ValueError("smart_home.accounts cannot contain duplicate IDs")
+    allowed_transports = {"poll", "push", "subscription", "companion_bridge", "fake"}
+    for account in config.smart_home.accounts:
+        if not account.provider or len(account.provider) > 80:
+            raise ValueError("smart_home account providers must contain 1 to 80 characters")
+        if account.transport not in allowed_transports:
+            raise ValueError(f"unsupported smart_home transport: {account.transport}")
+        if any(character in account.keychain_item_ref for character in ("\n", "\r")):
+            raise ValueError("smart_home keychain references cannot contain newlines")
+    for key, values in (
+        ("selected_structure_ids", config.smart_home.selected_structure_ids),
+        ("selected_room_ids", config.smart_home.selected_room_ids),
+    ):
+        if len(values) != len(set(values)) or any(not value for value in values):
+            raise ValueError(f"smart_home.{key} cannot contain empty or duplicate values")
+    for name, mapping in (
+        ("record_allowlist", config.smart_home.record_allowlist),
+        ("summary_allowlist", config.smart_home.summary_allowlist),
+    ):
+        for selection, capabilities in mapping.items():
+            if (
+                not selection
+                or not capabilities
+                or any(not capability for capability in capabilities)
+            ):
+                raise ValueError(f"smart_home.{name} cannot contain empty values")
+            if len(capabilities) != len(set(capabilities)):
+                raise ValueError(f"smart_home.{name} cannot contain duplicate capabilities")
+    for selection, capabilities in config.smart_home.summary_allowlist.items():
+        recorded = set(config.smart_home.record_allowlist.get(selection, ()))
+        if not set(capabilities).issubset(recorded):
+            raise ValueError("smart_home.summary_allowlist must be a subset of record_allowlist")
+    if not 5 <= config.smart_home.poll_interval_seconds <= 86_400:
+        raise ValueError("smart_home.poll_interval_seconds must be between 5 and 86400")
+    if not 0 <= config.smart_home.debounce_seconds <= 300:
+        raise ValueError("smart_home.debounce_seconds must be between 0 and 300")
+    if not 0 <= config.smart_home.merge_gap_seconds <= 86_400:
+        raise ValueError("smart_home.merge_gap_seconds must be between 0 and 86400")
+    if not 1 <= config.smart_home.high_frequency_min_interval_seconds <= 86_400:
+        raise ValueError(
+            "smart_home.high_frequency_min_interval_seconds must be between 1 and 86400"
+        )
+    if not 0 <= config.smart_home.max_clock_skew_seconds <= 86_400:
+        raise ValueError("smart_home.max_clock_skew_seconds must be between 0 and 86400")
+    if not 0 < config.smart_home.retry_initial_seconds <= config.smart_home.retry_max_seconds:
+        raise ValueError("smart_home retry delays must be positive and ordered")
+    if not 1 <= config.smart_home.retry_max_attempts <= 20:
+        raise ValueError("smart_home.retry_max_attempts must be between 1 and 20")
     if not 0 <= config.summary.hour <= 23 or not 0 <= config.summary.minute <= 59:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:

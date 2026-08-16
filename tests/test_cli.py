@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from family_recorder import cli
 from family_recorder.config import AppConfig, AudioConfig, load_config
 from family_recorder.devices import AudioDevice
@@ -99,3 +101,44 @@ def test_cli_applies_named_hallucination_preset(tmp_path) -> None:
     assert result == 0
     assert config.hallucination_filter.min_avg_logprob == -0.60
     assert config.hallucination_filter.repeat_window_seconds == 600
+
+
+def test_cli_summary_allowlist_also_enables_local_recording(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"storage:\n  data_dir: {str(tmp_path / 'data')!r}\n",
+        encoding="utf-8",
+    )
+    fixture = Path(__file__).parent / "fixtures" / "home" / "fake_home.json"
+
+    sync_result = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "home-sync-fixture",
+            "--fixture",
+            str(fixture),
+        ]
+    )
+    allow_result = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "set-home-capability",
+            "--scope",
+            "summary",
+            "--selection-key",
+            "fake-home/coffee-maker",
+            "--capability",
+            "on_off.on",
+            "--enabled",
+            "true",
+        ]
+    )
+
+    config = load_config(config_path)
+    assert sync_result == 0
+    assert allow_result == 0
+    assert config.smart_home.enabled is True
+    assert config.smart_home.record_allowlist == {"fake-home/coffee-maker": ("on_off.on",)}
+    assert config.smart_home.summary_allowlist == {"fake-home/coffee-maker": ("on_off.on",)}
