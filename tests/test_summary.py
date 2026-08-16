@@ -5,10 +5,13 @@ from types import SimpleNamespace
 from family_recorder.config import (
     AppConfig,
     CalendarConfig,
+    SmartHomeConfig,
     SpeakerConfig,
     StorageConfig,
     SummaryConfig,
 )
+from family_recorder.home.fake import FakeHomeProvider
+from family_recorder.home.service import HomeSyncService
 from family_recorder.storage import Storage
 from family_recorder.summary import (
     DailySummaryRunner,
@@ -28,6 +31,47 @@ class FakeCommandRunner:
         self.calls.append((command, kwargs))
         index = min(len(self.calls) - 1, len(self.stdout) - 1)
         return SimpleNamespace(returncode=0, stdout=self.stdout[index], stderr="")
+
+
+def test_summary_can_use_allowlisted_home_events_without_a_transcript(tmp_path: Path) -> None:
+    import asyncio
+
+    target = date(2026, 8, 16)
+    storage = StorageConfig(data_dir=tmp_path)
+    smart_home = SmartHomeConfig(
+        enabled=True,
+        record_allowlist={
+            "fake-home/coffee-maker": ("on_off.on", "vendor.secret_mode"),
+            "fake-home/extractor-hood": ("on_off.on", "fan_control.percent_current"),
+        },
+        summary_allowlist={
+            "fake-home/coffee-maker": ("on_off.on",),
+            "fake-home/extractor-hood": ("on_off.on",),
+        },
+    )
+    fixture = Path(__file__).parent / "fixtures" / "home" / "fake_home.json"
+    asyncio.run(HomeSyncService(storage, smart_home).sync_once(FakeHomeProvider.from_path(fixture)))
+    config = AppConfig(
+        storage=storage,
+        smart_home=smart_home,
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    command_runner = FakeCommandRunner(stdout="## 事件時間軸\n- 07:31：咖啡機運作")
+
+    result = DailySummaryRunner(
+        config,
+        command_runner=command_runner,
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    prompt = str(command_runner.calls[0][1]["input"])
+    assert "本機智慧家庭事件時間線" in prompt
+    assert "07:31–07:36｜廚房／咖啡機運作" in prompt
+    assert "19:08–19:26｜廚房／抽油煙機運作" in prompt
+    assert "turbo_secret" not in prompt
+    assert "provider_code" not in prompt
+    assert "不是語音逐字稿" in prompt
+    assert result.is_file()
 
 
 def test_summary_sends_only_transcript_text_through_hardened_codex_exec(tmp_path: Path) -> None:

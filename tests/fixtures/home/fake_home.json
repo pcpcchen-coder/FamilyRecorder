@@ -1,0 +1,141 @@
+{
+  "account": {
+    "id": "fake-home",
+    "provider": "fake",
+    "display_name": "測試智慧家庭",
+    "transport": "fake",
+    "metadata": {"fixture": true}
+  },
+  "structures": [
+    {
+      "id": "home-1",
+      "name": "家",
+      "timezone": "Asia/Taipei"
+    }
+  ],
+  "rooms": [
+    {
+      "id": "kitchen",
+      "structure_id": "home-1",
+      "name": "廚房"
+    }
+  ],
+  "devices": [
+    {
+      "id": "coffee-maker",
+      "name": "咖啡機",
+      "structure_id": "home-1",
+      "room_id": "kitchen",
+      "device_type": "coffee_maker",
+      "online": true,
+      "capabilities": [
+        {"key": "on_off.on", "display_name": "電源"},
+        {"key": "vendor.secret_mode", "display_name": "廠商模式"}
+      ]
+    },
+    {
+      "id": "extractor-hood",
+      "name": "抽油煙機",
+      "structure_id": "home-1",
+      "room_id": "kitchen",
+      "device_type": "extractor_hood",
+      "online": true,
+      "capabilities": [
+        {"key": "on_off.on", "display_name": "電源"},
+        {"key": "fan_control.percent_current", "display_name": "風速"}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event_id": "coffee-on",
+      "device_id": "coffee-maker",
+      "capability": "on_off.on",
+      "value": true,
+      "occurred_at": "2026-08-16T07:31:00+08:00",
+      "observed_at": "2026-08-16T07:31:01+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "coffee-mode",
+      "device_id": "coffee-maker",
+      "capability": "vendor.secret_mode",
+      "value": {"provider_code": 91, "mode": "turbo_secret"},
+      "occurred_at": "2026-08-16T07:31:02+08:00",
+      "observed_at": "2026-08-16T07:31:03+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "coffee-off",
+      "device_id": "coffee-maker",
+      "capability": "on_off.on",
+      "value": false,
+      "occurred_at": "2026-08-16T07:36:00+08:00",
+      "observed_at": "2026-08-16T07:36:01+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "hood-on",
+      "device_id": "extractor-hood",
+      "capability": "on_off.on",
+      "value": true,
+      "occurred_at": "2026-08-16T19:08:00+08:00",
+      "observed_at": "2026-08-16T19:08:01+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "history"
+    },
+    {
+      "event_id": "hood-speed-1",
+      "device_id": "extractor-hood",
+      "capability": "fan_control.percent_current",
+      "value": 30,
+      "occurred_at": "2026-08-16T19:08:03+08:00",
+      "observed_at": "2026-08-16T19:08:04+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "hood-speed-2",
+      "device_id": "extractor-hood",
+      "capability": "fan_control.percent_current",
+      "value": 35,
+      "occurred_at": "2026-08-16T19:08:10+08:00",
+      "observed_at": "2026-08-16T19:08:11+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "hood-speed-3",
+      "device_id": "extractor-hood",
+      "capability": "fan_control.percent_current",
+      "value": 40,
+      "occurred_at": "2026-08-16T19:08:20+08:00",
+      "observed_at": "2026-08-16T19:08:21+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "subscription"
+    },
+    {
+      "event_id": "hood-off",
+      "device_id": "extractor-hood",
+      "capability": "on_off.on",
+      "value": false,
+      "occurred_at": "2026-08-16T19:26:00+08:00",
+      "observed_at": "2026-08-16T19:26:01+08:00",
+      "timezone": "Asia/Taipei",
+      "source": "history"
+    }
+  ],
+  "cursor": {
+    "type": "sync",
+    "value": "fixture-cursor-1",
+    "updated_at": "2026-08-16T19:26:02+08:00"
+  },
+  "health": {
+    "status": "connected",
+    "checked_at": "2026-08-16T19:26:02+08:00",
+    "last_success_at": "2026-08-16T19:26:02+08:00"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://familyrecorder.local/schemas/home-companion-v1.schema.json",
+  "title": "FamilyRecorder credential-free home companion payload v1",
+  "type": "object",
+  "required": ["schema_version", "account"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "account": {
+      "type": "object",
+      "required": ["id", "provider", "display_name", "transport"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "provider": {"enum": ["google_home", "apple_home"]},
+        "display_name": {"type": "string", "minLength": 1},
+        "transport": {"const": "companion_bridge"},
+        "metadata": {"type": "object"}
+      }
+    },
+    "structures": {"type": "array", "items": {"$ref": "#/$defs/structure"}},
+    "rooms": {"type": "array", "items": {"$ref": "#/$defs/room"}},
+    "devices": {"type": "array", "items": {"$ref": "#/$defs/device"}},
+    "snapshots": {"type": "array", "items": {"$ref": "#/$defs/snapshot"}},
+    "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+    "cursor": {"$ref": "#/$defs/cursor"},
+    "health": {"$ref": "#/$defs/health"}
+  },
+  "$defs": {
+    "timestamp": {"type": "string", "format": "date-time"},
+    "structure": {
+      "type": "object",
+      "required": ["id", "name", "timezone"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "timezone": {"type": "string"}
+      }
+    },
+    "room": {
+      "type": "object",
+      "required": ["id", "structure_id", "name"],
+      "properties": {
+        "id": {"type": "string"},
+        "structure_id": {"type": "string"},
+        "name": {"type": "string"}
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": {"type": "string"},
+        "display_name": {"type": "string"},
+        "normalized_key": {"type": ["string", "null"]},
+        "metadata": {"type": "object"}
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "structure_id": {"type": "string"},
+        "room_id": {"type": "string"},
+        "device_type": {"type": "string"},
+        "online": {"type": ["boolean", "null"]},
+        "capabilities": {"type": "array", "items": {"$ref": "#/$defs/capability"}}
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["device_id", "observed_at", "timezone", "state"],
+      "properties": {
+        "snapshot_id": {"type": "string"},
+        "device_id": {"type": "string"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "timezone": {"type": "string"},
+        "source": {"type": "string"},
+        "state": {"type": "object"},
+        "normalized_state": {"type": "object"}
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["device_id", "capability", "value", "observed_at", "timezone"],
+      "properties": {
+        "event_id": {"type": "string"},
+        "device_id": {"type": "string"},
+        "capability": {"type": "string"},
+        "value": {},
+        "previous_value": {},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "timezone": {"type": "string"},
+        "source": {"type": "string"}
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "required": ["type", "value", "updated_at"],
+      "properties": {
+        "type": {"type": "string"},
+        "value": {"type": "string"},
+        "updated_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "health": {
+      "type": "object",
+      "required": ["status", "checked_at"],
+      "properties": {
+        "status": {"type": "string"},
+        "checked_at": {"$ref": "#/$defs/timestamp"},
+        "last_success_at": {"$ref": "#/$defs/timestamp"},
+        "message": {"type": "string"},
+        "retry_at": {"$ref": "#/$defs/timestamp"},
+        "requires_reauthorization": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -25,6 +26,10 @@ from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
 from family_recorder.direction import OutputRoute, XVF3800USBReader, capture_direction
+from family_recorder.home.bridge import load_companion_payload
+from family_recorder.home.fake import FakeHomeProvider
+from family_recorder.home.service import HomeSyncService
+from family_recorder.home.store import HomeStateStore
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
@@ -79,6 +84,29 @@ def _parser() -> argparse.ArgumentParser:
     summary_prompt.add_argument("--prompt", required=True)
     commands.add_parser("reset-summary-prompt", help="Restore the built-in summary instructions")
     commands.add_parser("menu-status", help=argparse.SUPPRESS)
+
+    home_fixture = commands.add_parser(
+        "home-sync-fixture", help="Import a fake smart-home provider fixture for local testing"
+    )
+    home_fixture.add_argument("--fixture", type=Path, required=True)
+    home_bridge = commands.add_parser(
+        "home-ingest-companion",
+        help="Import a credential-free payload from a signed mobile companion",
+    )
+    home_bridge.add_argument("--file", type=Path, required=True)
+    home_capability = commands.add_parser(
+        "set-home-capability",
+        help="Allow one discovered device capability to be recorded or summarized",
+    )
+    home_capability.add_argument("--scope", choices=("record", "summary"), required=True)
+    home_capability.add_argument("--selection-key", required=True)
+    home_capability.add_argument("--capability", required=True)
+    home_capability.add_argument("--enabled", choices=("true", "false"), required=True)
+    home_disconnect = commands.add_parser(
+        "disconnect-home-account", help="Disconnect a provider while retaining local history"
+    )
+    home_disconnect.add_argument("--account-id", required=True)
+    commands.add_parser("home-status", help="Show local smart-home connection and privacy status")
 
     hallucination_preset = commands.add_parser(
         "set-hallucination-preset",
@@ -392,6 +420,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
             }
             for candidate in storage.pending_calendar_candidates()
         ]
+    smart_home_status = _smart_home_status(config)
     return {
         "paused": pause_state.paused,
         "pause_label": pause_state.label,
@@ -441,7 +470,78 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         },
         "calendar_member_default_ids": config.calendar.member_default_calendar_ids,
         "calendar_pending_events": pending_calendar_events,
+        "smart_home": smart_home_status,
     }
+
+
+def _smart_home_status(config: AppConfig) -> dict[str, object]:
+    with HomeStateStore(config.storage) as store:
+        accounts = store.account_statuses()
+        devices = store.device_statuses(config.smart_home)
+    stored_account_ids = {str(account["id"]) for account in accounts}
+    accounts.extend(
+        {
+            "id": account.id,
+            "provider": account.provider,
+            "display_name": account.display_name or account.id,
+            "transport": account.transport,
+            "status": "disconnected",
+            "message": "尚未完成第一次同步",
+            "requires_reauthorization": False,
+            "last_checked_at": None,
+            "last_success_at": None,
+            "retry_at": None,
+        }
+        for account in config.smart_home.accounts
+        if account.id not in stored_account_ids
+    )
+    failures = [
+        account
+        for account in accounts
+        if account["status"] in {"error", "degraded", "reauthorization_required"}
+    ]
+    last_successes = [
+        str(account["last_success_at"]) for account in accounts if account.get("last_success_at")
+    ]
+    if not config.smart_home.enabled:
+        status = "disabled"
+    elif not accounts:
+        status = "not_connected"
+    elif failures:
+        status = "attention"
+    elif any(account["status"] == "connected" for account in accounts):
+        status = "connected"
+    else:
+        status = "disconnected"
+    return {
+        "enabled": config.smart_home.enabled,
+        "status": status,
+        "last_updated_at": max(last_successes, default=""),
+        "accounts": accounts,
+        "devices": devices,
+        "errors": [str(account["message"]) for account in failures if account["message"]],
+        "google_native_macos_supported": False,
+        "google_connection_path": "signed_ios_or_android_companion_bridge",
+    }
+
+
+def _set_allowlist_value(
+    mapping: dict[str, tuple[str, ...]],
+    selection: str,
+    capability: str,
+    enabled: bool,
+) -> dict[str, tuple[str, ...]]:
+    updated = {key: tuple(values) for key, values in mapping.items()}
+    values = list(updated.get(selection, ()))
+    if enabled and capability not in values:
+        values.append(capability)
+    if not enabled and capability in values:
+        values.remove(capability)
+    if values:
+        updated[selection] = tuple(sorted(values))
+    else:
+        updated.pop(selection, None)
+    return updated
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -470,6 +570,134 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "resume":
             state = resume_recording(config.storage.data_dir)
             print(state.label)
+            return 0
+        if args.command == "home-sync-fixture":
+            provider = FakeHomeProvider.from_path(args.fixture.expanduser().resolve())
+            result = asyncio.run(
+                HomeSyncService(config.storage, config.smart_home).sync_once(provider)
+            )
+            print(
+                "智慧家庭測試資料已同步："
+                f"事件 {result.events_inserted}、快照 {result.snapshots_inserted}、"
+                f"去重 {result.duplicates_skipped}、合併 {result.coalesced}、"
+                f"隱私規則略過 {result.policy_skipped}"
+            )
+            return 0
+        if args.command == "home-ingest-companion":
+            batch = load_companion_payload(args.file.expanduser().resolve())
+            with HomeStateStore(config.storage) as store:
+                result = store.record_batch(batch, config.smart_home)
+            print(
+                "Companion 狀態已匯入："
+                f"事件 {result.events_inserted}、快照 {result.snapshots_inserted}、"
+                f"隱私規則略過 {result.policy_skipped}"
+            )
+            return 0
+        if args.command == "home-status":
+            print(json.dumps(_smart_home_status(config), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "set-home-capability":
+            selection = args.selection_key.strip()
+            capability = args.capability.strip()
+            if (
+                not selection
+                or not capability
+                or any(character in selection + capability for character in ("\n", "\r"))
+            ):
+                raise ValueError("智慧家庭裝置與屬性識別不可空白或包含換行")
+            status = _smart_home_status(config)
+            discovered = {
+                (device["selection_key"], item["key"])
+                for device in status["devices"]
+                for item in device["capabilities"]
+            }
+            if (selection, capability) not in discovered:
+                raise ValueError("找不到已探索的智慧家庭裝置屬性")
+            enabled = args.enabled == "true"
+            record_allowlist = dict(config.smart_home.record_allowlist)
+            summary_allowlist = dict(config.smart_home.summary_allowlist)
+            if args.scope == "record":
+                record_allowlist = _set_allowlist_value(
+                    record_allowlist, selection, capability, enabled
+                )
+                if not enabled:
+                    summary_allowlist = _set_allowlist_value(
+                        summary_allowlist, selection, capability, False
+                    )
+            else:
+                summary_allowlist = _set_allowlist_value(
+                    summary_allowlist, selection, capability, enabled
+                )
+                if enabled:
+                    record_allowlist = _set_allowlist_value(
+                        record_allowlist, selection, capability, True
+                    )
+            smart_home = replace(
+                config.smart_home,
+                enabled=True,
+                record_allowlist=record_allowlist,
+                summary_allowlist=summary_allowlist,
+            )
+            validate_config(replace(config, smart_home=smart_home))
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "smart_home", "enabled", True)
+            update_yaml_value(
+                config_path,
+                "smart_home",
+                "record_allowlist",
+                {key: list(values) for key, values in record_allowlist.items()},
+            )
+            update_yaml_value(
+                config_path,
+                "smart_home",
+                "summary_allowlist",
+                {key: list(values) for key, values in summary_allowlist.items()},
+            )
+            print("智慧家庭隱私 allowlist 已更新")
+            return 0
+        if args.command == "disconnect-home-account":
+            account_id = args.account_id.strip()
+            if not account_id:
+                raise ValueError("智慧家庭 account ID 不可空白")
+            accounts = tuple(
+                account for account in config.smart_home.accounts if account.id != account_id
+            )
+            removed_from_config = len(accounts) != len(config.smart_home.accounts)
+            prefix = f"{account_id}/"
+            record_allowlist = {
+                key: values
+                for key, values in config.smart_home.record_allowlist.items()
+                if not key.startswith(prefix)
+            }
+            summary_allowlist = {
+                key: values
+                for key, values in config.smart_home.summary_allowlist.items()
+                if not key.startswith(prefix)
+            }
+            with HomeStateStore(config.storage) as store:
+                disconnected = store.disconnect_account(account_id)
+            if not disconnected and not removed_from_config:
+                raise ValueError("找不到這個智慧家庭連線")
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(
+                config_path,
+                "smart_home",
+                "accounts",
+                [asdict(account) for account in accounts],
+            )
+            update_yaml_value(
+                config_path,
+                "smart_home",
+                "record_allowlist",
+                {key: list(values) for key, values in record_allowlist.items()},
+            )
+            update_yaml_value(
+                config_path,
+                "smart_home",
+                "summary_allowlist",
+                {key: list(values) for key, values in summary_allowlist.items()},
+            )
+            print("智慧家庭連線已移除；本機歷史事件仍保留")
             return 0
         if args.command == "diagnose-beamforming":
             report = _beamforming_diagnostic(config)

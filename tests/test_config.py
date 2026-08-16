@@ -163,3 +163,67 @@ def test_load_config_rejects_invalid_direction_interval(tmp_path: Path) -> None:
     config_file.write_text("direction:\n  sample_interval_seconds: 0.01\n", encoding="utf-8")
     with pytest.raises(ValueError, match="sample_interval_seconds"):
         load_config(config_file)
+
+
+def test_load_config_accepts_smart_home_privacy_allowlists(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """smart_home:
+  enabled: true
+  accounts:
+    - id: family-google
+      provider: google_home
+      display_name: 家庭 Google Home
+      transport: companion_bridge
+      keychain_item_ref: com.familyrecorder.home.family-google
+  selected_structure_ids: [family-google/home-1]
+  selected_room_ids: [family-google/kitchen]
+  record_allowlist:
+    family-google/coffee-maker: [on_off.on, vendor.mode]
+  summary_allowlist:
+    family-google/coffee-maker: [on_off.on]
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.smart_home.enabled is True
+    assert config.smart_home.accounts[0].transport == "companion_bridge"
+    assert config.smart_home.record_allowlist["family-google/coffee-maker"] == (
+        "on_off.on",
+        "vendor.mode",
+    )
+    assert config.smart_home.summary_allowlist["family-google/coffee-maker"] == ("on_off.on",)
+
+
+def test_load_config_rejects_summary_capability_not_recorded(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """smart_home:
+  record_allowlist:
+    account/device: [on_off.on]
+  summary_allowlist:
+    account/device: [vendor.mode]
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="subset"):
+        load_config(config_file)
+
+
+def test_load_config_rejects_secret_account_field(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """smart_home:
+  accounts:
+    - id: unsafe
+      provider: tuya
+      client_secret: never-store-here
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unknown HomeAccountConfig keys"):
+        load_config(config_file)

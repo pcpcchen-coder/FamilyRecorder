@@ -178,6 +178,110 @@ final class MemberCalendarChoice: NSObject {
     }
 }
 
+struct SmartHomeAccountStatus: Decodable {
+    let id: String
+    let provider: String
+    let displayName: String
+    let transport: String
+    let status: String
+    let message: String
+    let requiresReauthorization: Bool
+    let lastCheckedAt: String?
+    let lastSuccessAt: String?
+    let retryAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case provider
+        case displayName = "display_name"
+        case transport
+        case status
+        case message
+        case requiresReauthorization = "requires_reauthorization"
+        case lastCheckedAt = "last_checked_at"
+        case lastSuccessAt = "last_success_at"
+        case retryAt = "retry_at"
+    }
+}
+
+struct SmartHomeCapabilityStatus: Decodable {
+    let key: String
+    let name: String
+    let normalizedKey: String?
+    let recordEnabled: Bool
+    let summaryEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case name
+        case normalizedKey = "normalized_key"
+        case recordEnabled = "record_enabled"
+        case summaryEnabled = "summary_enabled"
+    }
+}
+
+struct SmartHomeDeviceStatus: Decodable {
+    let selectionKey: String
+    let accountID: String
+    let deviceID: String
+    let name: String
+    let deviceType: String
+    let online: Bool?
+    let lastSeenAt: String
+    let structureName: String
+    let roomName: String
+    let capabilities: [SmartHomeCapabilityStatus]
+
+    enum CodingKeys: String, CodingKey {
+        case selectionKey = "selection_key"
+        case accountID = "account_id"
+        case deviceID = "device_id"
+        case name
+        case deviceType = "device_type"
+        case online
+        case lastSeenAt = "last_seen_at"
+        case structureName = "structure_name"
+        case roomName = "room_name"
+        case capabilities
+    }
+}
+
+struct SmartHomeStatus: Decodable {
+    let enabled: Bool
+    let status: String
+    let lastUpdatedAt: String
+    let accounts: [SmartHomeAccountStatus]
+    let devices: [SmartHomeDeviceStatus]
+    let errors: [String]
+    let googleNativeMacOSSupported: Bool
+    let googleConnectionPath: String
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case status
+        case lastUpdatedAt = "last_updated_at"
+        case accounts
+        case devices
+        case errors
+        case googleNativeMacOSSupported = "google_native_macos_supported"
+        case googleConnectionPath = "google_connection_path"
+    }
+}
+
+final class SmartHomeCapabilityChoice: NSObject {
+    let selectionKey: String
+    let capabilityKey: String
+    let scope: String
+    let enabled: Bool
+
+    init(selectionKey: String, capabilityKey: String, scope: String, enabled: Bool) {
+        self.selectionKey = selectionKey
+        self.capabilityKey = capabilityKey
+        self.scope = scope
+        self.enabled = enabled
+    }
+}
+
 struct RecorderStatus: Decodable {
     let paused: Bool
     let pauseLabel: String
@@ -213,6 +317,7 @@ struct RecorderStatus: Decodable {
     let calendarMemberIDs: [String: [String]]
     let calendarMemberDefaultIDs: [String: String]
     let calendarPendingEvents: [PendingCalendarEvent]
+    let smartHome: SmartHomeStatus
 
     enum CodingKeys: String, CodingKey {
         case paused
@@ -249,6 +354,7 @@ struct RecorderStatus: Decodable {
         case calendarMemberIDs = "calendar_member_ids"
         case calendarMemberDefaultIDs = "calendar_member_default_ids"
         case calendarPendingEvents = "calendar_pending_events"
+        case smartHome = "smart_home"
     }
 }
 
@@ -725,6 +831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(directionItem)
 
         menu.addItem(buildCalendarMenu(status))
+        menu.addItem(buildSmartHomeMenu(status))
 
         menu.addItem(.separator())
         menu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
@@ -937,6 +1044,179 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return calendarItem
     }
 
+    private func smartHomeStatusLabel(_ status: SmartHomeStatus) -> String {
+        switch status.status {
+        case "disabled": return "尚未啟用"
+        case "not_connected": return "尚未連接"
+        case "connected": return "已連接"
+        case "attention": return "需要處理"
+        default: return "未連線"
+        }
+    }
+
+    private func smartHomeAccountStatusLabel(_ account: SmartHomeAccountStatus) -> String {
+        switch account.status {
+        case "connected": return "已連線"
+        case "degraded": return "連線不穩"
+        case "reauthorization_required": return "需要重新授權"
+        case "error": return "連線錯誤"
+        default: return "未連線"
+        }
+    }
+
+    private func buildSmartHomeMenu(_ recorderStatus: RecorderStatus) -> NSMenuItem {
+        let status = recorderStatus.smartHome
+        let homeItem = item("智慧家庭裝置")
+        let homeMenu = NSMenu()
+        homeMenu.addItem(item("狀態：\(smartHomeStatusLabel(status))", enabled: false))
+        if !status.lastUpdatedAt.isEmpty {
+            homeMenu.addItem(item("最後更新：\(status.lastUpdatedAt)", enabled: false))
+        }
+        for message in status.errors.prefix(3) {
+            homeMenu.addItem(item("⚠️ \(message)", enabled: false))
+        }
+
+        homeMenu.addItem(.separator())
+        homeMenu.addItem(
+            item("連接 Google Home…", action: #selector(showGoogleHomeConnectionInfo))
+        )
+        homeMenu.addItem(
+            item(
+                "目前需由已簽章的 iPhone／iPad companion 授權",
+                enabled: false
+            )
+        )
+
+        if !status.accounts.isEmpty {
+            homeMenu.addItem(.separator())
+            for account in status.accounts {
+                let accountItem = item(account.displayName)
+                let accountMenu = NSMenu()
+                accountMenu.addItem(
+                    item("同步狀態：\(smartHomeAccountStatusLabel(account))", enabled: false)
+                )
+                if let lastSuccess = account.lastSuccessAt, !lastSuccess.isEmpty {
+                    accountMenu.addItem(item("最後成功：\(lastSuccess)", enabled: false))
+                }
+                if !account.message.isEmpty {
+                    accountMenu.addItem(item(account.message, enabled: false))
+                }
+                if account.requiresReauthorization {
+                    accountMenu.addItem(
+                        item("重新授權…", action: #selector(showGoogleHomeConnectionInfo))
+                    )
+                }
+                accountMenu.addItem(.separator())
+                accountMenu.addItem(
+                    item(
+                        "移除此連線…",
+                        action: #selector(disconnectSmartHomeAccount),
+                        representedObject: account.id
+                    )
+                )
+                accountItem.submenu = accountMenu
+                homeMenu.addItem(accountItem)
+            }
+        }
+
+        homeMenu.addItem(.separator())
+        let selectionItem = item("選擇住家／房間／裝置屬性")
+        let selectionMenu = NSMenu()
+        if status.devices.isEmpty {
+            selectionMenu.addItem(item("尚未探索到裝置", enabled: false))
+        } else {
+            let accountNames = Dictionary(
+                uniqueKeysWithValues: status.accounts.map { ($0.id, $0.displayName) }
+            )
+            let accountDevices = Dictionary(grouping: status.devices) { $0.accountID }
+            let accountIDs = accountDevices.keys.sorted {
+                (accountNames[$0] ?? $0) < (accountNames[$1] ?? $1)
+            }
+            for accountID in accountIDs {
+                let accountItem = item(accountNames[accountID] ?? accountID)
+                let accountMenu = NSMenu()
+                let structures = Dictionary(
+                    grouping: accountDevices[accountID] ?? []
+                ) { $0.structureName }
+                for structureName in structures.keys.sorted() {
+                    let structureItem = item(structureName)
+                    let structureMenu = NSMenu()
+                    let rooms = Dictionary(
+                        grouping: structures[structureName] ?? []
+                    ) { $0.roomName }
+                    for roomName in rooms.keys.sorted() {
+                        let roomItem = item(roomName)
+                        let roomMenu = NSMenu()
+                        for device in (rooms[roomName] ?? []).sorted(by: { $0.name < $1.name }) {
+                            let onlineLabel = device.online == false ? "（離線）" : ""
+                            let deviceItem = item("\(device.name)\(onlineLabel)")
+                            let deviceMenu = NSMenu()
+                            for capability in device.capabilities {
+                                let capabilityItem = item(capability.name)
+                                let capabilityMenu = NSMenu()
+                                let recordChoice = SmartHomeCapabilityChoice(
+                                    selectionKey: device.selectionKey,
+                                    capabilityKey: capability.key,
+                                    scope: "record",
+                                    enabled: !capability.recordEnabled
+                                )
+                                let recordItem = item(
+                                    "記錄原始狀態（僅本機）",
+                                    action: #selector(toggleSmartHomeCapability),
+                                    representedObject: recordChoice
+                                )
+                                recordItem.state = capability.recordEnabled ? .on : .off
+                                capabilityMenu.addItem(recordItem)
+                                let summaryChoice = SmartHomeCapabilityChoice(
+                                    selectionKey: device.selectionKey,
+                                    capabilityKey: capability.key,
+                                    scope: "summary",
+                                    enabled: !capability.summaryEnabled
+                                )
+                                let summaryItem = item(
+                                    "允許文字事件進每日摘要",
+                                    action: #selector(toggleSmartHomeCapability),
+                                    representedObject: summaryChoice
+                                )
+                                summaryItem.state = capability.summaryEnabled ? .on : .off
+                                capabilityMenu.addItem(summaryItem)
+                                if capability.normalizedKey == nil {
+                                    capabilityMenu.addItem(
+                                        item(
+                                            "未知屬性會原樣保存在本機，不自動進摘要",
+                                            enabled: false
+                                        )
+                                    )
+                                }
+                                capabilityItem.submenu = capabilityMenu
+                                deviceMenu.addItem(capabilityItem)
+                            }
+                            deviceItem.submenu = deviceMenu
+                            roomMenu.addItem(deviceItem)
+                        }
+                        roomItem.submenu = roomMenu
+                        structureMenu.addItem(roomItem)
+                    }
+                    structureItem.submenu = structureMenu
+                    accountMenu.addItem(structureItem)
+                }
+                accountItem.submenu = accountMenu
+                selectionMenu.addItem(accountItem)
+            }
+        }
+        selectionItem.submenu = selectionMenu
+        homeMenu.addItem(selectionItem)
+        homeMenu.addItem(.separator())
+        homeMenu.addItem(
+            item("重新讀取本機同步狀態", action: #selector(refreshFromMenu))
+        )
+        homeMenu.addItem(
+            item("本階段唯讀記錄，不提供遠端開關或控制", enabled: false)
+        )
+        homeItem.submenu = homeMenu
+        return homeItem
+    }
+
     private func runSimpleAction(_ arguments: [String], successTitle: String) {
         runRecorderAsync(arguments) { [weak self] status, output in
             self?.refreshStatus(rebuildMenu: true)
@@ -946,6 +1226,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.showAlert(title: successTitle, message: output)
             }
         }
+    }
+
+    @objc private func showGoogleHomeConnectionInfo() {
+        let alert = NSAlert()
+        alert.messageText = "Google Home 需要行動裝置 companion"
+        alert.informativeText = """
+        Google 官方 Home APIs SDK 目前只支援 Android 與 iOS，不能由這個原生 macOS App 直接登入。FamilyRecorder 已建立安全的 companion bridge 邊界，但尚未建立或連接任何 Google Cloud 專案。
+
+        下一階段需由你決定是否建立 Google Cloud OAuth 設定，並用已簽章的 iPhone／iPad companion 完成 Google 授權；Mac 只接收不含憑證的狀態事件。
+        """
+        alert.addButton(withTitle: "好")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    @objc private func toggleSmartHomeCapability(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? SmartHomeCapabilityChoice else { return }
+        runSimpleAction(
+            [
+                "set-home-capability",
+                "--scope", choice.scope,
+                "--selection-key", choice.selectionKey,
+                "--capability", choice.capabilityKey,
+                "--enabled", choice.enabled ? "true" : "false"
+            ],
+            successTitle: ""
+        )
+    }
+
+    @objc private func disconnectSmartHomeAccount(_ sender: NSMenuItem) {
+        guard let accountID = sender.representedObject as? String else { return }
+        let alert = NSAlert()
+        alert.messageText = "移除智慧家庭連線？"
+        alert.informativeText = "這會停止後續同步並清除該連線的 allowlist；既有本機事件會保留。"
+        alert.addButton(withTitle: "移除連線")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        runSimpleAction(
+            ["disconnect-home-account", "--account-id", accountID],
+            successTitle: "智慧家庭連線已移除"
+        )
     }
 
     @objc private func pause15Minutes() {
