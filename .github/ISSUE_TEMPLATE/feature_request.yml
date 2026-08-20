@@ -1,0 +1,43 @@
+name: 💡 Idea or use case / 想法或應用場景
+description: A new scenario, a limitation you hit, or a feature idea. 新場景、遇到的限制，或功能想法。
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful feedback is **"I use it for X and got stuck at Y"** — that pinpoints which limitation actually blocks people.
+
+        最有用的回饋是**「我用它做 X，卡在 Y」** —— 這直接指出哪個限制真的會擋到人。
+
+        Please check the [roadmap](https://github.com/pcpcchen-coder/FamilyRecorder/blob/main/docs/roadmap.md) first — it lists both candidate directions and what is deliberately excluded.
+        請先看[發展藍圖](https://github.com/pcpcchen-coder/FamilyRecorder/blob/main/docs/roadmap.md)，那裡列出候選方向與刻意不做的事。
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: What are you trying to do / 你想做什麼
+      description: Describe the actual situation, not only the feature. 描述實際情境，不只是功能本身。
+    validations:
+      required: true
+
+  - type: textarea
+    id: blocker
+    attributes:
+      label: What stops you today / 現在卡在哪裡
+      description: Which limitation did you hit? What workaround did you try? 遇到哪個限制？試過什麼替代做法？
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What might help / 你覺得怎麼做會有幫助
+      description: Optional. 選填。
+
+  - type: checkboxes
+    id: non-goals
+    attributes:
+      label: Scope / 範圍
+      options:
+        - label: This is not on the [explicit non-goals](https://github.com/pcpcchen-coder/FamilyRecorder/blob/main/docs/privacy.md#明確非目標) list / 這不在明確非目標清單上
+          required: true
