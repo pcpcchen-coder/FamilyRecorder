@@ -31,62 +31,40 @@
 ## 資料流全圖
 
 ```mermaid
-flowchart LR
-    subgraph DEV["🎙️ 裝置"]
-        RAW["原始四麥克風訊號"]
-    end
+flowchart TB
+    DEV["🎙️ 原始四麥克風訊號"]
 
-    subgraph MAC["🔒 這台 Mac —— 以下全部從不外流"]
-        WAVF["WAV 音訊<br/>audio/"]
-        FEAT["聲音特徵向量<br/>speaker-profiles/ · 0600"]
-        TEL["DoA 角度 · 四束 Speech Energy<br/>acoustic_samples"]
-        AUDIT["攔截稽核記錄<br/>transcription_audits"]
+    subgraph MAC["🔒 這台 Mac —— 除了逐字稿文字，以下全部從不外流"]
+        AUDIO["WAV 音訊 · 聲音特徵向量 0600<br/>DoA · Speech Energy · 攔截稽核 · logs"]
         SQLITE[("listener.sqlite3")]
-        LOGS["logs/"]
-        TXT["逐字稿文字<br/>transcripts/"]
-        SUMM["摘要<br/>summaries/"]
+        TXT["逐字稿文字 transcripts/"]
+        SUMM["摘要 summaries/"]
     end
 
-    subgraph NET["☁️ 網路"]
-        CHATGPT["你自己的 ChatGPT 帳號<br/>官方 Codex CLI"]
-        HF["Hugging Face<br/>whisper.cpp 模型"]
-        BREW["Homebrew · GitHub<br/>相依套件與原始碼"]
+    subgraph OUTSIDE["這台 Mac 以外"]
+        CHATGPT["☁️ 你自己的 ChatGPT 帳號"]
+        EVENTKIT["🍎 EventKit → 行事曆 App<br/>→ 你已加入的 Google 帳號"]
+        DL["⬇️ Hugging Face · Homebrew<br/>僅安裝與下載模型時"]
     end
 
-    subgraph MACOS["🍎 macOS 系統服務"]
-        EVENTKIT["EventKit → 行事曆 App<br/>→ 你已加入的 Google 帳號"]
-    end
-
-    RAW ==> WAVF
-    RAW ==> TEL
-    WAVF ==> FEAT
-    WAVF ==> TXT
-    WAVF ==> SQLITE
-    TEL ==> SQLITE
-    AUDIT ==> SQLITE
+    DEV ==> AUDIO ==> TXT
+    AUDIO ==> SQLITE
     TXT ==> SQLITE
-
-    TXT -->|"每日一次 · stdin · 只有文字"| CHATGPT
-    CHATGPT --> SUMM
+    TXT -->|"每日一次 · stdin · 只有文字"| CHATGPT --> SUMM
     TXT -->|"僅在啟用行事曆時<br/>候選標題 · 時間 · 成員名"| EVENTKIT
-
-    HF -.->|"僅安裝與切換模型時"| MAC
-    BREW -.->|"僅安裝時"| MAC
-
-    WAVF -.-x NET
-    FEAT -.-x NET
-    TEL -.-x NET
-    SQLITE -.-x NET
-    LOGS -.-x NET
-    SUMM -.-x NET
+    DL -.->|"僅下載"| AUDIO
 
     classDef never fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef leaves fill:#fff8e1,stroke:#f9a825,color:#e65100
-    class WAVF,FEAT,TEL,AUDIT,SQLITE,LOGS,SUMM never
+    classDef outside fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef dev fill:#fff3e0,stroke:#e65100,color:#3e2723
+    class MAC,AUDIO,SQLITE,SUMM never
     class TXT leaves
+    class OUTSIDE,CHATGPT,EVENTKIT,DL outside
+    class DEV dev
 ```
 
-`-.-x` 的線代表**從不離開這台 Mac**。
+綠色的一切**從不離開這台 Mac**；只有黃色的逐字稿文字每天跨越邊界一次。
 
 ---
 

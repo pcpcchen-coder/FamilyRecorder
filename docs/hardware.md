@@ -20,34 +20,27 @@ XVF3800 提供兩條互相獨立的資料通道：**UAC 音訊**與 **USB vendor
 ## XVF3800 的兩條通道
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph DEV["XVF3800 / XMOS 韌體"]
-        direction TB
-        MICS["四顆麥克風"]
-        DSP["韌體 DSP<br/>beamforming · AEC · 降噪"]
-        MUX["audio mux<br/>AUDIO_MGR_OP_L / R"]
-        MICS --> DSP --> MUX
+        MICS["四顆麥克風"] --> DSP["韌體 DSP<br/>beamforming · AEC · 降噪"]
+        DSP --> MUX["audio mux<br/>AUDIO_MGR_OP_L / R"]
     end
 
     subgraph CH["UAC 音訊通道"]
-        direction TB
         LCH["左聲道<br/>category 6 或 8<br/>processed auto-selected beam"]
         RCH["右聲道<br/>通常 category 7<br/>ASR / AEC residual"]
     end
 
     subgraph TELE["USB vendor control 通道"]
-        direction TB
         DOA["DOA_VALUE<br/>聲源角度"]
         SPE["AEC_SPENERGY_VALUES<br/>四束 Speech Energy"]
     end
 
-    MUX --> LCH
-    MUX --> RCH
-    DSP --> DOA
-    DSP --> SPE
+    MUX --> LCH & RCH
+    DSP --> DOA & SPE
 
     LCH ==>|"FamilyRecorder 只取這一條"| USE["30 秒 PCM16"]
-    RCH -.->|"預設不使用"| X["混合會破壞 beamformed 訊號"]
+    RCH -.->|"預設不使用"| X["混合會破壞<br/>beamformed 訊號"]
     DOA & SPE ==>|"每 0.25 秒"| TEL["acoustic_samples"]
 
     classDef good fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

@@ -45,43 +45,31 @@ FamilyRecorder 是一套在 **Apple Silicon Mac** 上常駐執行的聲音日誌
 ```mermaid
 flowchart TB
     subgraph HW["🎙️ 桌上的硬體"]
-        MIC["XVF3800 / XMOS<br/>四麥克風陣列"]
+        MIC["XVF3800 / XMOS 四麥克風陣列"]
     end
 
-    subgraph LOCAL["🔒 你的 Mac —— 這一整層完全離線"]
-        direction TB
-        GATE{"融合語音閘門<br/>RMS ＋ WebRTC VAD<br/>＋ 硬體 Speech Energy"}
-        WHISPER["whisper.cpp<br/>large-v3-turbo · Metal"]
-        FILTER{"多層防幻覺過濾"}
-        ENRICH["逐段標註<br/>可能說話者 ＋ 來源方向"]
-        MD["transcripts<br/>YYYY-MM-DD.md"]
-        DB[("listener.sqlite3<br/>逐筆遙測與稽核")]
+    subgraph LOCAL["🔒 你的 Mac —— 這一整層完全離線，不需要網路"]
+        GATE{"融合語音閘門<br/>RMS ＋ WebRTC VAD ＋ 硬體 Speech Energy"}
+        ASR["whisper.cpp 本機辨識<br/>＋ 多層防幻覺過濾"]
+        MD["逐段標註可能說話者與來源方向<br/>➜ transcripts/YYYY-MM-DD.md"]
+        DB[("listener.sqlite3<br/>遙測 · 稽核 · 索引")]
     end
 
     subgraph CLOUD["☁️ 每日一次 —— 只有純文字離開這台 Mac"]
-        CODEX["官方 Codex CLI<br/>Sign in with ChatGPT"]
+        CODEX["官方 Codex CLI · Sign in with ChatGPT"]
     end
 
-    subgraph OUT["📄 你每天早上看到的東西"]
-        SUM["summaries<br/>YYYY-MM-DD.md"]
-        CAL["Google Calendar<br/>候選事件"]
+    subgraph OUT["📄 隔天早上"]
+        SUM["summaries/YYYY-MM-DD.md"]
+        CAL["Google Calendar 候選事件"]
     end
 
-    MIC -->|"UAC 左聲道<br/>processed beam · 30 秒 PCM"| GATE
-    MIC -->|"USB control · 每 0.25 秒<br/>DoA ＋ 四束 Speech Energy"| GATE
-    MIC -.->|"方向遙測"| ENRICH
-
-    GATE -->|"判定為安靜：不存 WAV、不進 Whisper"| DB
-    GATE -->|"判定有語音"| WHISPER
-    WHISPER --> FILTER
-    FILTER -->|"攔截的幻覺文字"| DB
-    FILTER -->|"通過"| ENRICH
-    ENRICH --> MD
-    ENRICH --> DB
-    MD -->|"排程執行 · 只讀取文字檔"| CODEX
-    CODEX --> SUM
-    CODEX --> CAL
-    SUM --> DB
+    MIC -->|"30 秒 PCM ＋ DoA ＋ Speech Energy"| GATE
+    GATE -->|"有語音"| ASR --> MD
+    GATE -.->|"安靜：不存 WAV、不進 Whisper"| DB
+    ASR -.->|"攔截的幻覺文字"| DB
+    MD --> DB
+    MD ==>|"排程執行 · 只讀取文字檔"| CODEX --> SUM & CAL
 
     classDef hw fill:#fff3e0,stroke:#e65100,color:#3e2723
     classDef local fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

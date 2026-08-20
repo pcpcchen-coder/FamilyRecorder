@@ -20,34 +20,27 @@ The XVF3800 exposes two independent data channels: **UAC audio** and **USB vendo
 ## The two channels
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph DEV["XVF3800 / XMOS firmware"]
-        direction TB
-        MICS["four microphones"]
-        DSP["firmware DSP<br/>beamforming · AEC · noise suppression"]
-        MUX["audio mux<br/>AUDIO_MGR_OP_L / R"]
-        MICS --> DSP --> MUX
+        MICS["four microphones"] --> DSP["firmware DSP<br/>beamforming · AEC · noise suppression"]
+        DSP --> MUX["audio mux<br/>AUDIO_MGR_OP_L / R"]
     end
 
     subgraph CH["UAC audio channel"]
-        direction TB
         LCH["left channel<br/>category 6 or 8<br/>processed auto-selected beam"]
         RCH["right channel<br/>usually category 7<br/>ASR / AEC residual"]
     end
 
     subgraph TELE["USB vendor-control channel"]
-        direction TB
         DOA["DOA_VALUE<br/>source angle"]
         SPE["AEC_SPENERGY_VALUES<br/>four-beam Speech Energy"]
     end
 
-    MUX --> LCH
-    MUX --> RCH
-    DSP --> DOA
-    DSP --> SPE
+    MUX --> LCH & RCH
+    DSP --> DOA & SPE
 
     LCH ==>|"FamilyRecorder takes only this one"| USE["30-second PCM16"]
-    RCH -.->|"unused by default"| X["mixing destroys the beamformed signal"]
+    RCH -.->|"unused by default"| X["mixing destroys the<br/>beamformed signal"]
     DOA & SPE ==>|"every 0.25s"| TEL["acoustic_samples"]
 
     classDef good fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

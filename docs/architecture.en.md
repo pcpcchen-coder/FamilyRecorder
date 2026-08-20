@@ -196,26 +196,26 @@ Stereo downmix is treated as **ambiguous**: the right channel can carry ASR/AEC-
 
 ```mermaid
 flowchart TB
-    START["30-second chunk captured"] --> ANA["analyze_audio<br/>RMS · SNR · speech_ratio<br/>low-freq ratio · tonal concentration"]
-    ANA --> SWQ{"Software VAD passes?<br/>speech_ratio ≥ min_speech_ratio<br/>and RMS ≥ min_rms_dbfs"}
+    START["30-second chunk captured"] --> ANA["analyze_audio<br/>RMS · SNR · speech_ratio<br/>low-freq ratio · tonality"]
+    ANA --> SWQ{"Software VAD passes?"}
 
-    SWQ -->|"yes"| HWSIL{"Hardware silence guard<br/>Speech Energy ≈ 0<br/>and software evidence weak<br/>and SNR weak"}
-    HWSIL -->|"all three hold"| R1["discard<br/>hallucination_filter:hardware_silence"]
-    HWSIL -->|"no"| TONAL{"Low-frequency / narrow-tonal noise<br/>and not hardware speech<br/>and software and SNR both weak"}
-    TONAL -->|"yes"| R2["discard<br/>hallucination_filter:tonal_noise"]
-    TONAL -->|"no"| NOISE{"Near the adaptive noise floor<br/>and not hardware speech<br/>and software and SNR both weak"}
-    NOISE -->|"yes"| R3["discard<br/>hallucination_filter:adaptive_noise_floor"]
-    NOISE -->|"no"| K1["keep<br/>gate_reason = software_vad"]
+    SWQ -->|"yes"| HWSIL{"hardware silence<br/>+ software weak<br/>+ SNR weak"}
+    HWSIL -->|"all three"| R1["discard<br/>hardware_silence"]
+    HWSIL -->|"no"| TONAL{"tonal / low-freq noise<br/>+ not hardware speech<br/>+ both weak"}
+    TONAL -->|"yes"| R2["discard<br/>tonal_noise"]
+    TONAL -->|"no"| NOISE{"near noise floor<br/>+ not hardware speech<br/>+ both weak"}
+    NOISE -->|"yes"| R3["discard<br/>adaptive_noise_floor"]
+    NOISE -->|"no"| K1["keep<br/>software_vad"]
 
-    SWQ -->|"no"| HWQ{"Hardware rescue?<br/>direction and speech_energy enabled<br/>status = speech<br/>speech_ratio ≥ min_ratio<br/>and RMS ≥ speech_energy_min_rms_dbfs"}
-    HWQ -->|"yes"| K2["keep<br/>gate_reason = xvf3800_speech_energy"]
-    HWQ -->|"no"| UNAVL{"Speech Energy unreadable?"}
-    UNAVL -->|"yes"| R4["discard<br/>software_vad; speech_energy_unavailable"]
-    UNAVL -->|"no"| R5["discard<br/>gate_reason = silence"]
+    SWQ -->|"no"| HWQ{"Can hardware<br/>Speech Energy rescue it?"}
+    HWQ -->|"yes"| K2["keep<br/>xvf3800_speech_energy"]
+    HWQ -->|"no"| UNAVL{"telemetry unreadable?"}
+    UNAVL -->|"yes"| R4["discard<br/>speech_energy_unavailable"]
+    UNAVL -->|"no"| R5["discard<br/>silence"]
 
     K1 --> WAV["write WAV<br/>send to Whisper"]
     K2 --> WAV
-    R1 & R2 & R3 & R4 & R5 --> TEL["no WAV created<br/>still written to captures and acoustic_samples"]
+    R1 & R2 & R3 & R4 & R5 --> TEL["no WAV created<br/>still written to captures<br/>and acoustic_samples"]
 
     classDef keep fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef drop fill:#ffebee,stroke:#c62828,color:#b71c1c
@@ -224,6 +224,8 @@ flowchart TB
     class R1,R2,R3,R4,R5,TEL drop
     class SWQ,HWSIL,TONAL,NOISE,HWQ,UNAVL q
 ```
+
+The discard labels above are abbreviated. The full `captures.gate_reason` values are `hallucination_filter:hardware_silence`, `hallucination_filter:tonal_noise`, `hallucination_filter:adaptive_noise_floor`, `software_vad; speech_energy_unavailable`, and `silence` — see [data and SQLite](data-model.en.md#possible-gate_reason-values).
 
 Three things matter here:
 
@@ -241,24 +243,24 @@ Every completed chunk is written to `captures`, including those judged silent wi
 
 ```mermaid
 flowchart TB
-    IN["whisper-cli returns JSON<br/>segments + tokens"] --> EMPTY{"Text empty?"}
-    EMPTY -->|"yes"| ST_EMPTY["segments.status = empty<br/>audits.decision = empty<br/>no Markdown written"]
-    EMPTY -->|"no"| NS{"no_speech_probability<br/>≥ 0.60"}
-    NS -->|"yes"| F1["reject · whisper_no_speech"]
-    NS -->|"no"| LP{"avg_logprob<br/>&lt; -0.80"}
-    LP -->|"yes"| F2["reject · whisper_low_logprob"]
-    LP -->|"no"| TOK{"low-probability token ratio<br/>&gt; 0.15"}
-    TOK -->|"yes"| F3["reject · whisper_low_token_confidence"]
-    TOK -->|"no"| CR{"compression ratio<br/>&gt; 2.40"}
-    CR -->|"yes"| F4["reject · whisper_repetitive_text"]
-    CR -->|"no"| SHORT{"normalized length<br/>&lt; min_repeat_text_chars"}
-    SHORT -->|"yes · e.g. 好 / 嗯"| OK["accept"]
-    SHORT -->|"no"| REP{"Within a 300s window,<br/>a sentence at similarity ≥ 0.96<br/>already appeared ≥ max_repetitions times"}
-    REP -->|"yes"| F5["reject · repeated_across_chunks"]
+    IN["whisper-cli JSON<br/>segments + tokens"] --> EMPTY{"Text empty?"}
+    EMPTY -->|"yes"| ST_EMPTY["status = empty<br/>no Markdown written"]
+    EMPTY -->|"no"| NS{"no-speech probability ≥ 0.60"}
+    NS -->|"yes"| F1["reject<br/>whisper_no_speech"]
+    NS -->|"no"| LP{"avg_logprob &lt; -0.80"}
+    LP -->|"yes"| F2["reject<br/>whisper_low_logprob"]
+    LP -->|"no"| TOK{"low-confidence tokens &gt; 0.15"}
+    TOK -->|"yes"| F3["reject<br/>whisper_low_token_confidence"]
+    TOK -->|"no"| CR{"compression ratio &gt; 2.40"}
+    CR -->|"yes"| F4["reject<br/>whisper_repetitive_text"]
+    CR -->|"no"| SHORT{"too short?<br/>e.g. an interjection"}
+    SHORT -->|"yes"| OK["accept"]
+    SHORT -->|"no"| REP{"similar long sentence<br/>within 300s?"}
+    REP -->|"yes"| F5["reject<br/>repeated_across_chunks"]
     REP -->|"no"| OK
 
-    OK --> WRITE["append to the day's Markdown<br/>segments.status = transcribed<br/>audits.decision = accepted"]
-    F1 & F2 & F3 & F4 & F5 --> AUD["written to transcription_audits only<br/>decision = filtered<br/>never enters Markdown or the cloud summary"]
+    OK --> WRITE["append to the day's Markdown<br/>status = transcribed"]
+    F1 & F2 & F3 & F4 & F5 --> AUD["written to transcription_audits only<br/>never enters Markdown or the cloud summary"]
 
     classDef keep fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef drop fill:#ffebee,stroke:#c62828,color:#b71c1c
@@ -549,48 +551,27 @@ flowchart TB
 ## Trust boundary summary
 
 ```mermaid
-flowchart LR
-    subgraph DEV["🎙️ Device"]
-        RAW["raw four-microphone signal"]
-    end
+flowchart TB
+    DEV["🎙️ Device: raw four-microphone signal"]
+
     subgraph MAC["🔒 This Mac"]
-        WAVF["WAV audio"]
-        FEAT["voice feature vectors"]
-        TEL["DoA · Speech Energy"]
-        AUDIT["rejection audit rows"]
-        SQLITE[("SQLite")]
+        NEVER["Never leaves:<br/>WAV audio · voice feature vectors<br/>DoA · Speech Energy<br/>rejection audits · SQLite · logs"]
         TXT["transcript text"]
     end
-    subgraph NET["☁️ Network"]
-        CHATGPT["your own ChatGPT account"]
-        HF["Hugging Face<br/>whisper.cpp model downloads"]
-        BREW["Homebrew<br/>dependencies"]
-    end
-    subgraph MACOS["🍎 macOS system services"]
-        EVENTKIT["EventKit → Calendar app<br/>→ the Google account you added"]
-    end
 
-    RAW ==>|"USB · after firmware processing"| WAVF
-    RAW ==> TEL
-    WAVF ==> FEAT
-    WAVF ==> TXT
-    TEL ==> SQLITE
-    FEAT ==> SQLITE
-    AUDIT ==> SQLITE
-    TXT -->|"once per day · over stdin"| CHATGPT
-    HF -.->|"only when installing or switching models"| MAC
-    BREW -.->|"only at install time"| MAC
-    TXT -->|"only when calendar is enabled:<br/>candidate title and time"| EVENTKIT
+    NETW["☁️ Network: your own ChatGPT account"]
 
-    WAVF -.-x NET
-    FEAT -.-x NET
-    TEL -.-x NET
-    SQLITE -.-x NET
+    DEV ==> NEVER ==> TXT
+    TXT -->|"once a day · text only"| NETW
 
     classDef never fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef leaves fill:#fff8e1,stroke:#f9a825,color:#e65100
-    class WAVF,FEAT,TEL,AUDIT,SQLITE never
+    classDef outside fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef dev fill:#fff3e0,stroke:#e65100,color:#3e2723
+    class MAC,NEVER never
     class TXT leaves
+    class NETW outside
+    class DEV dev
 ```
 
 The four `-.-x` edges mean **never leaves this Mac**. The only thing that crosses the boundary is transcript text, once per day. Full threat model in [Privacy and trust boundaries](privacy.en.md).

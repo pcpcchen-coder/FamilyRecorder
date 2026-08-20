@@ -46,43 +46,31 @@ Three things make it different from a typical cloud recorder:
 ```mermaid
 flowchart TB
     subgraph HW["🎙️ Hardware on the table"]
-        MIC["XVF3800 / XMOS<br/>4-microphone array"]
+        MIC["XVF3800 / XMOS 4-microphone array"]
     end
 
-    subgraph LOCAL["🔒 Your Mac — this entire layer is offline"]
-        direction TB
-        GATE{"Fused speech gate<br/>RMS + WebRTC VAD<br/>+ hardware Speech Energy"}
-        WHISPER["whisper.cpp<br/>large-v3-turbo · Metal"]
-        FILTER{"Multi-layer<br/>hallucination filter"}
-        ENRICH["Per-segment labels<br/>likely speaker + direction"]
-        MD["transcripts<br/>YYYY-MM-DD.md"]
-        DB[("listener.sqlite3<br/>telemetry and audits")]
+    subgraph LOCAL["🔒 Your Mac — this entire layer is offline, no network needed"]
+        GATE{"Fused speech gate<br/>RMS + WebRTC VAD + hardware Speech Energy"}
+        ASR["whisper.cpp on-device recognition<br/>+ multi-layer hallucination filtering"]
+        MD["Per-segment likely speaker and source direction<br/>➜ transcripts/YYYY-MM-DD.md"]
+        DB[("listener.sqlite3<br/>telemetry · audits · index")]
     end
 
     subgraph CLOUD["☁️ Once per day — only text leaves this Mac"]
-        CODEX["Official Codex CLI<br/>Sign in with ChatGPT"]
+        CODEX["Official Codex CLI · Sign in with ChatGPT"]
     end
 
-    subgraph OUT["📄 What you read the next morning"]
-        SUM["summaries<br/>YYYY-MM-DD.md"]
-        CAL["Google Calendar<br/>candidate events"]
+    subgraph OUT["📄 The next morning"]
+        SUM["summaries/YYYY-MM-DD.md"]
+        CAL["Google Calendar candidate events"]
     end
 
-    MIC -->|"UAC left channel<br/>processed beam · 30s PCM"| GATE
-    MIC -->|"USB control · every 0.25s<br/>DoA + four-beam Speech Energy"| GATE
-    MIC -.->|"direction telemetry"| ENRICH
-
-    GATE -->|"judged silent: no WAV, no Whisper"| DB
-    GATE -->|"judged speech"| WHISPER
-    WHISPER --> FILTER
-    FILTER -->|"rejected hallucinations"| DB
-    FILTER -->|"accepted"| ENRICH
-    ENRICH --> MD
-    ENRICH --> DB
-    MD -->|"scheduled run · reads the text file only"| CODEX
-    CODEX --> SUM
-    CODEX --> CAL
-    SUM --> DB
+    MIC -->|"30s PCM + DoA + Speech Energy"| GATE
+    GATE -->|"speech detected"| ASR --> MD
+    GATE -.->|"silent: no WAV, no Whisper"| DB
+    ASR -.->|"rejected hallucinations"| DB
+    MD --> DB
+    MD ==>|"scheduled run · reads the text file only"| CODEX --> SUM & CAL
 
     classDef hw fill:#fff3e0,stroke:#e65100,color:#3e2723
     classDef local fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

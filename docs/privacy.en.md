@@ -31,62 +31,40 @@ If even that is too much, set `summary.enabled: false`. Recording, local transcr
 ## Complete data flow
 
 ```mermaid
-flowchart LR
-    subgraph DEV["🎙️ Device"]
-        RAW["raw four-microphone signal"]
-    end
+flowchart TB
+    DEV["🎙️ raw four-microphone signal"]
 
-    subgraph MAC["🔒 This Mac — none of the following ever leaves"]
-        WAVF["WAV audio<br/>audio/"]
-        FEAT["voice feature vectors<br/>speaker-profiles/ · 0600"]
-        TEL["DoA angles · four-beam Speech Energy<br/>acoustic_samples"]
-        AUDIT["rejection audit rows<br/>transcription_audits"]
+    subgraph MAC["🔒 This Mac — apart from transcript text, none of this ever leaves"]
+        AUDIO["WAV audio · voice feature vectors 0600<br/>DoA · Speech Energy · rejection audits · logs"]
         SQLITE[("listener.sqlite3")]
-        LOGS["logs/"]
-        TXT["transcript text<br/>transcripts/"]
-        SUMM["summaries<br/>summaries/"]
+        TXT["transcript text transcripts/"]
+        SUMM["summaries/"]
     end
 
-    subgraph NET["☁️ Network"]
-        CHATGPT["your own ChatGPT account<br/>official Codex CLI"]
-        HF["Hugging Face<br/>whisper.cpp models"]
-        BREW["Homebrew · GitHub<br/>dependencies and sources"]
+    subgraph OUTSIDE["Outside this Mac"]
+        CHATGPT["☁️ your own ChatGPT account"]
+        EVENTKIT["🍎 EventKit → Calendar app<br/>→ the Google account you added"]
+        DL["⬇️ Hugging Face · Homebrew<br/>install and model downloads only"]
     end
 
-    subgraph MACOS["🍎 macOS system services"]
-        EVENTKIT["EventKit → Calendar app<br/>→ the Google account you added"]
-    end
-
-    RAW ==> WAVF
-    RAW ==> TEL
-    WAVF ==> FEAT
-    WAVF ==> TXT
-    WAVF ==> SQLITE
-    TEL ==> SQLITE
-    AUDIT ==> SQLITE
+    DEV ==> AUDIO ==> TXT
+    AUDIO ==> SQLITE
     TXT ==> SQLITE
-
-    TXT -->|"once a day · stdin · text only"| CHATGPT
-    CHATGPT --> SUMM
-    TXT -->|"only when calendar is enabled:<br/>candidate title · time · member name"| EVENTKIT
-
-    HF -.->|"only when installing or switching models"| MAC
-    BREW -.->|"only at install time"| MAC
-
-    WAVF -.-x NET
-    FEAT -.-x NET
-    TEL -.-x NET
-    SQLITE -.-x NET
-    LOGS -.-x NET
-    SUMM -.-x NET
+    TXT -->|"once a day · stdin · text only"| CHATGPT --> SUMM
+    TXT -->|"only when calendar is enabled<br/>candidate title · time · member"| EVENTKIT
+    DL -.->|"download only"| AUDIO
 
     classDef never fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef leaves fill:#fff8e1,stroke:#f9a825,color:#e65100
-    class WAVF,FEAT,TEL,AUDIT,SQLITE,LOGS,SUMM never
+    classDef outside fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef dev fill:#fff3e0,stroke:#e65100,color:#3e2723
+    class MAC,AUDIO,SQLITE,SUMM never
     class TXT leaves
+    class OUTSIDE,CHATGPT,EVENTKIT,DL outside
+    class DEV dev
 ```
 
-The `-.-x` edges mean **never leaves this Mac**.
+Everything in green **never leaves this Mac**; only the transcript text, in amber, crosses the boundary once a day.
 
 ---
 

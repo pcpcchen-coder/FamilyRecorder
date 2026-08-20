@@ -1,0 +1,87 @@
+name: 🐛 Bug report / 問題回報
+description: Something does not work as documented. 有東西的行為和文件不符。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ Redact before posting / 貼上前請先移除敏感內容
+
+        Logs, SQL results, and `doctor` output can contain transcript content, household member names, your username in file paths, and calendar IDs. **Substitute those before pasting.**
+
+        log、SQL 查詢結果與 `doctor` 輸出可能包含逐字稿內容、家庭成員姓名、路徑中的使用者名稱與日曆 ID。**請先代換掉再貼上。**
+
+        For security problems, use [private reporting](https://github.com/pcpcchen-coder/FamilyRecorder/security/advisories/new) instead.
+        安全性問題請改用[私密回報](https://github.com/pcpcchen-coder/FamilyRecorder/security/advisories/new)。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / 發生了什麼
+      description: What did you expect, and what happened instead? 你預期什麼？實際發生什麼？
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 重現步驟
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: FamilyRecorder version / 版本
+      description: From `pyproject.toml`, the installer, or the menu bar.
+      placeholder: "0.14.4"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version / macOS 版本
+      description: Output of `sw_vers -productVersion`.
+      placeholder: "14.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Microphone / 麥克風
+      options:
+        - reSpeaker XVF3800 USB 4-Mic Array
+        - Another XMOS XVF3800 board
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`doctor` output / `doctor` 輸出"
+      description: "`family-recorder --config \"$CONFIG\" doctor` — redacted."
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines / 相關 log
+      description: "From `logs/listener.error.log` or `logs/summary.error.log` — redacted."
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting / 送出前
+      options:
+        - label: I checked [troubleshooting](https://github.com/pcpcchen-coder/FamilyRecorder/blob/main/docs/troubleshooting.md) / 我看過常見問題
+          required: true
+        - label: I removed transcript content, names, and my username from everything above / 我已移除上面所有內容中的逐字稿、姓名與使用者名稱
+          required: true

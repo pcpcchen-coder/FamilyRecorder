@@ -11,10 +11,10 @@ This document covers **how to configure each scenario today**, **prompt template
 ## Contents
 
 - [The core idea: one pipeline, different ways to organize](#the-core-idea-one-pipeline-different-ways-to-organize)
-- [Scenario 1: Household voice log](#scenario-1-household-voice-log--fully-implemented)
-- [Scenario 2: Tutoring and study review](#scenario-2-tutoring-and-study-review--custom-prompt-is-enough)
-- [Scenario 3: Dreams and night-time ideas](#scenario-3-dreams-and-night-time-ideas--custom-prompt-is-enough)
-- [Scenario 4: Solo thinking-out-loud memos](#scenario-4-solo-thinking-out-loud-memos--custom-prompt-is-enough)
+- [Scenario 1: Household voice log](#scenario-1-household-voice-log)
+- [Scenario 2: Tutoring and study review](#scenario-2-tutoring-and-study-review)
+- [Scenario 3: Dreams and night-time ideas](#scenario-3-dreams-and-night-time-ideas)
+- [Scenario 4: Solo thinking-out-loud memos](#scenario-4-solo-thinking-out-loud-memos)
 - [Adapting it to your own scenario](#adapting-it-to-your-own-scenario)
 - [The ethics checklist every scenario shares](#the-ethics-checklist-every-scenario-shares)
 
@@ -65,7 +65,9 @@ Switching scenarios requires **no code changes**. You change three things in the
 
 ---
 
-## Scenario 1: Household voice log — ✅ fully implemented
+## Scenario 1: Household voice log
+
+> ✅ **Fully implemented**
 
 **The problem:** "Remember to pick up the parcel tomorrow." "Parent-teacher meeting next Wednesday." Ten seconds later, nobody remembers.
 
@@ -87,7 +89,9 @@ See [Daily summary and calendar](daily-summary.en.md) for full details.
 
 ---
 
-## Scenario 2: Tutoring and study review — 🟡 custom prompt is enough
+## Scenario 2: Tutoring and study review
+
+> 🟡 **Works today — swap the summary prompt**
 
 **The problem:** After a one-hour tutoring session the student remembers fragments. The mistake the teacher emphasized, the concept explained twice, the question asked on the spot — all of it stays in the room.
 
@@ -153,7 +157,9 @@ Workaround for multiple lessons: **pause** recording between sessions from the m
 
 ---
 
-## Scenario 3: Dreams and night-time ideas — 🟡 custom prompt is enough
+## Scenario 3: Dreams and night-time ideas
+
+> 🟡 **Works today — swap the summary prompt**
 
 **The problem:** A dream evaporates within minutes of waking. Turning on a light, unlocking a phone, opening an app — that process alone is enough to lose it.
 
@@ -233,7 +239,9 @@ into a coherent story.
 
 ---
 
-## Scenario 4: Solo thinking-out-loud memos — 🟡 custom prompt is enough
+## Scenario 4: Solo thinking-out-loud memos
+
+> 🟡 **Works today — swap the summary prompt**
 
 **The problem:** The most complete version of an idea arrives while washing dishes, walking, or driving — and the 30 seconds it takes to open a phone is enough to lose it.
 

@@ -197,25 +197,25 @@ flowchart LR
 ```mermaid
 flowchart TB
     START["30 秒 chunk 擷取完成"] --> ANA["analyze_audio<br/>RMS · SNR · speech_ratio<br/>低頻比 · 窄頻集中度"]
-    ANA --> SWQ{"software VAD 通過？<br/>speech_ratio ≥ min_speech_ratio<br/>且 RMS ≥ min_rms_dbfs"}
+    ANA --> SWQ{"software VAD 通過？"}
 
-    SWQ -->|"是"| HWSIL{"硬體靜音守門<br/>Speech Energy ≈ 0<br/>且 software 證據弱<br/>且 SNR 弱"}
-    HWSIL -->|"三者皆成立"| R1["丟棄<br/>hallucination_filter:hardware_silence"]
-    HWSIL -->|"否"| TONAL{"低頻／窄頻固定音<br/>且非硬體語音<br/>且 software 與 SNR 皆弱"}
-    TONAL -->|"是"| R2["丟棄<br/>hallucination_filter:tonal_noise"]
-    TONAL -->|"否"| NOISE{"接近自適應噪音基線<br/>且非硬體語音<br/>且 software 與 SNR 皆弱"}
-    NOISE -->|"是"| R3["丟棄<br/>hallucination_filter:adaptive_noise_floor"]
-    NOISE -->|"否"| K1["保留<br/>gate_reason = software_vad"]
+    SWQ -->|"是"| HWSIL{"硬體靜音<br/>＋ software 弱<br/>＋ SNR 弱"}
+    HWSIL -->|"三者皆成立"| R1["丟棄<br/>hardware_silence"]
+    HWSIL -->|"否"| TONAL{"低頻／窄頻固定音<br/>＋ 非硬體語音<br/>＋ 兩者皆弱"}
+    TONAL -->|"是"| R2["丟棄<br/>tonal_noise"]
+    TONAL -->|"否"| NOISE{"接近噪音基線<br/>＋ 非硬體語音<br/>＋ 兩者皆弱"}
+    NOISE -->|"是"| R3["丟棄<br/>adaptive_noise_floor"]
+    NOISE -->|"否"| K1["保留<br/>software_vad"]
 
-    SWQ -->|"否"| HWQ{"硬體救援？<br/>direction 與 speech_energy 啟用<br/>status = speech<br/>speech_ratio ≥ min_ratio<br/>且 RMS ≥ speech_energy_min_rms_dbfs"}
-    HWQ -->|"是"| K2["保留<br/>gate_reason = xvf3800_speech_energy"]
-    HWQ -->|"否"| UNAVL{"Speech Energy 讀不到？"}
-    UNAVL -->|"是"| R4["丟棄<br/>software_vad; speech_energy_unavailable"]
-    UNAVL -->|"否"| R5["丟棄<br/>gate_reason = silence"]
+    SWQ -->|"否"| HWQ{"硬體 Speech Energy<br/>可以救回嗎？"}
+    HWQ -->|"是"| K2["保留<br/>xvf3800_speech_energy"]
+    HWQ -->|"否"| UNAVL{"遙測讀不到？"}
+    UNAVL -->|"是"| R4["丟棄<br/>speech_energy_unavailable"]
+    UNAVL -->|"否"| R5["丟棄<br/>silence"]
 
     K1 --> WAV["寫入 WAV<br/>送進 Whisper"]
     K2 --> WAV
-    R1 & R2 & R3 & R4 & R5 --> TEL["不建立 WAV<br/>仍寫入 captures 與 acoustic_samples"]
+    R1 & R2 & R3 & R4 & R5 --> TEL["不建立 WAV<br/>仍寫入 captures<br/>與 acoustic_samples"]
 
     classDef keep fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef drop fill:#ffebee,stroke:#c62828,color:#b71c1c
@@ -224,6 +224,8 @@ flowchart TB
     class R1,R2,R3,R4,R5,TEL drop
     class SWQ,HWSIL,TONAL,NOISE,HWQ,UNAVL q
 ```
+
+圖中的丟棄標籤是簡寫。`captures.gate_reason` 的完整值為 `hallucination_filter:hardware_silence`、`hallucination_filter:tonal_noise`、`hallucination_filter:adaptive_noise_floor`、`software_vad; speech_energy_unavailable` 與 `silence`；完整對照見 [資料與 SQLite](data-model.md#gate_reason-的可能值)。
 
 三個重點：
 
@@ -241,24 +243,24 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    IN["whisper-cli 回傳 JSON<br/>segments + tokens"] --> EMPTY{"文字為空？"}
-    EMPTY -->|"是"| ST_EMPTY["segments.status = empty<br/>audits.decision = empty<br/>不寫 Markdown"]
-    EMPTY -->|"否"| NS{"no_speech_probability<br/>≥ 0.60"}
-    NS -->|"是"| F1["攔截 · whisper_no_speech"]
-    NS -->|"否"| LP{"avg_logprob<br/>&lt; -0.80"}
-    LP -->|"是"| F2["攔截 · whisper_low_logprob"]
-    LP -->|"否"| TOK{"低可信 token 比例<br/>&gt; 0.15"}
-    TOK -->|"是"| F3["攔截 · whisper_low_token_confidence"]
-    TOK -->|"否"| CR{"壓縮率<br/>&gt; 2.40"}
-    CR -->|"是"| F4["攔截 · whisper_repetitive_text"]
-    CR -->|"否"| SHORT{"正規化後長度<br/>&lt; min_repeat_text_chars"}
-    SHORT -->|"是 · 例如「好」「嗯」"| OK["接受"]
-    SHORT -->|"否"| REP{"300 秒視窗內<br/>相似度 ≥ 0.96 的句子<br/>已出現 ≥ max_repetitions 次"}
-    REP -->|"是"| F5["攔截 · repeated_across_chunks"]
+    IN["whisper-cli JSON<br/>segments + tokens"] --> EMPTY{"文字為空？"}
+    EMPTY -->|"是"| ST_EMPTY["status = empty<br/>不寫 Markdown"]
+    EMPTY -->|"否"| NS{"無語音機率 ≥ 0.60"}
+    NS -->|"是"| F1["攔截<br/>whisper_no_speech"]
+    NS -->|"否"| LP{"avg_logprob &lt; -0.80"}
+    LP -->|"是"| F2["攔截<br/>whisper_low_logprob"]
+    LP -->|"否"| TOK{"低可信 token 比例 &gt; 0.15"}
+    TOK -->|"是"| F3["攔截<br/>whisper_low_token_confidence"]
+    TOK -->|"否"| CR{"壓縮率 &gt; 2.40"}
+    CR -->|"是"| F4["攔截<br/>whisper_repetitive_text"]
+    CR -->|"否"| SHORT{"太短？<br/>例如「好」「嗯」"}
+    SHORT -->|"是"| OK["接受"]
+    SHORT -->|"否"| REP{"300 秒內<br/>已出現相似長句？"}
+    REP -->|"是"| F5["攔截<br/>repeated_across_chunks"]
     REP -->|"否"| OK
 
-    OK --> WRITE["附加到當日 Markdown<br/>segments.status = transcribed<br/>audits.decision = accepted"]
-    F1 & F2 & F3 & F4 & F5 --> AUD["只寫入 transcription_audits<br/>decision = filtered<br/>永不進入 Markdown 或雲端摘要"]
+    OK --> WRITE["附加到當日 Markdown<br/>status = transcribed"]
+    F1 & F2 & F3 & F4 & F5 --> AUD["只寫入 transcription_audits<br/>永不進入 Markdown 或雲端摘要"]
 
     classDef keep fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef drop fill:#ffebee,stroke:#c62828,color:#b71c1c
@@ -547,51 +549,30 @@ flowchart TB
 ## 信任邊界總結
 
 ```mermaid
-flowchart LR
-    subgraph DEV["🎙️ 裝置"]
-        RAW["原始四麥克風訊號"]
-    end
+flowchart TB
+    DEV["🎙️ 裝置：原始四麥克風訊號"]
+
     subgraph MAC["🔒 這台 Mac"]
-        WAVF["WAV 音訊"]
-        FEAT["聲音特徵向量"]
-        TEL["DoA · Speech Energy"]
-        AUDIT["攔截稽核記錄"]
-        SQLITE[("SQLite")]
+        NEVER["從不離開：<br/>WAV 音訊 · 聲音特徵向量<br/>DoA · Speech Energy<br/>攔截稽核 · SQLite · logs"]
         TXT["逐字稿文字"]
     end
-    subgraph NET["☁️ 網路"]
-        CHATGPT["你自己的 ChatGPT 帳號"]
-        HF["Hugging Face<br/>whisper.cpp 模型下載"]
-        BREW["Homebrew<br/>相依套件"]
-    end
-    subgraph MACOS["🍎 macOS 系統服務"]
-        EVENTKIT["EventKit → 行事曆 App<br/>→ 已加入的 Google 帳號"]
-    end
 
-    RAW ==>|"USB · 韌體處理後"| WAVF
-    RAW ==> TEL
-    WAVF ==> FEAT
-    WAVF ==> TXT
-    TEL ==> SQLITE
-    FEAT ==> SQLITE
-    AUDIT ==> SQLITE
-    TXT -->|"每日一次 · stdin"| CHATGPT
-    HF -.->|"僅安裝與切換模型時"| MAC
-    BREW -.->|"僅安裝時"| MAC
-    TXT -->|"僅在啟用行事曆時<br/>候選事件標題與時間"| EVENTKIT
+    NETW["☁️ 網路：你自己的 ChatGPT 帳號"]
 
-    WAVF -.-x NET
-    FEAT -.-x NET
-    TEL -.-x NET
-    SQLITE -.-x NET
+    DEV ==> NEVER ==> TXT
+    TXT -->|"每日一次 · 只有文字"| NETW
 
     classDef never fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef leaves fill:#fff8e1,stroke:#f9a825,color:#e65100
-    class WAVF,FEAT,TEL,AUDIT,SQLITE never
+    classDef outside fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef dev fill:#fff3e0,stroke:#e65100,color:#3e2723
+    class MAC,NEVER never
     class TXT leaves
+    class NETW outside
+    class DEV dev
 ```
 
-`-.-x` 的四條線代表**從不離開這台 Mac**。唯一跨越邊界的是逐字稿文字，每天一次。完整威脅模型見 [隱私與信任邊界](privacy.md)。
+綠色的一切**從不離開這台 Mac**。唯一跨越邊界的是逐字稿文字，每天一次。逐項資料的去向、威脅模型，以及你可以自己執行的驗證步驟，見 [隱私與信任邊界](privacy.md)。
 
 ---
 

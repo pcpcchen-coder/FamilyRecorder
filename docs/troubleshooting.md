@@ -27,7 +27,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 **權限與服務**
 [LaunchAgent 沒收到聲音](#launchagent-沒收到聲音) ·
 [麥克風 App 列表沒有 FamilyRecorder](#麥克風-app-列表沒有-familyrecorder) ·
-[Google Calendar 沒有出現授權視窗](#按連接選擇預設-google-calendar-沒有出現授權視窗) ·
+[Google Calendar 沒有出現授權視窗](#按連接選擇預設-google-calendar沒有出現授權視窗) ·
 [系統設定仍顯示 python3.12](#系統設定仍顯示-python312-或-family-recorder) ·
 [選單列沒有圖示](#選單列沒有圖示)
 
