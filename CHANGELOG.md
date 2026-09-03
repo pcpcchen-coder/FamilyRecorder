@@ -14,6 +14,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Versions
 ## [Unreleased]
 
 ### Added
+- Offline history reader / 離線歷史紀錄閱讀頁：menu access, date/summary search, summary/transcript views, refresh after successful summaries, private generated files and complete-uninstall support. No server or additional AI request.
 - MIT `LICENSE` — the repository previously had no license, which legally prevented reuse and redistribution.
 - Bilingual documentation set under `docs/`, with a Traditional Chinese page (`name.md`) and an English page (`name.en.md`) for every topic: getting started, hardware, configuration, daily summary, speakers, menu bar, data model, CLI, privacy, architecture, use cases, roadmap, troubleshooting, development.
 - New Mermaid architecture diagrams: layered overview, module dependency map, capture gate decision order, text-filter decision order, per-segment enrichment sequence, cloud summary sequence, calendar candidate state machine, process topology, menu-bar control sequence, uninstall boundary, and trust boundary.

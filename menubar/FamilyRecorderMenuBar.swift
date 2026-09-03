@@ -186,6 +186,7 @@ struct RecorderStatus: Decodable {
     let dataDir: String
     let transcriptDir: String
     let summaryDir: String
+    let historyIndex: String?
     let audioDir: String
     let logDir: String
     let todayTranscript: String
@@ -222,6 +223,7 @@ struct RecorderStatus: Decodable {
         case dataDir = "data_dir"
         case transcriptDir = "transcript_dir"
         case summaryDir = "summary_dir"
+        case historyIndex = "history_index"
         case audioDir = "audio_dir"
         case logDir = "log_dir"
         case todayTranscript = "today_transcript"
@@ -272,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var runningProcesses: [Process] = []
     private var autoCreatingCalendarEventIDs: Set<Int> = []
     private var lastCalendarAccessError: String?
+    private var buildingHistory = false
 
     init(programPath: String, configPath: String, uninstallerPath: String) {
         self.programPath = programPath
@@ -547,8 +550,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(pauseMenuItem)
         }
 
+        menu.addItem(item(
+            buildingHistory ? "正在更新歷史紀錄…" : "閱讀歷史紀錄…",
+            action: #selector(openHistory), enabled: !buildingHistory
+        ))
         let openItem = item("打開…")
         let openMenu = NSMenu()
+        openMenu.addItem(item(
+            "歷史紀錄首頁的位置", action: #selector(revealHistory)
+        ))
         openMenu.addItem(item("今天的逐字稿", action: #selector(openPath), representedObject: status.todayTranscript))
         openMenu.addItem(item("今天的摘要", action: #selector(openPath), representedObject: status.todaySummary))
         openMenu.addItem(.separator())
@@ -971,6 +981,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             url.deleteLastPathComponent()
         }
         NSWorkspace.shared.open(url)
+    }
+
+    private var historyURL: URL? {
+        guard let status = currentStatus else { return nil }
+        return URL(fileURLWithPath: status.historyIndex ?? "\(status.dataDir)/history/index.html")
+    }
+
+    private func refreshHistory(reveal: Bool) {
+        guard !buildingHistory, let url = historyURL else { return }
+        buildingHistory = true
+        if let status = currentStatus { buildMenu(status) }
+        runRecorderAsync(["build-history"]) { [weak self] code, output in
+            guard let self = self else { return }
+            self.buildingHistory = false
+            self.refreshStatus(rebuildMenu: true)
+            guard code == 0, FileManager.default.fileExists(atPath: url.path) else {
+                self.showAlert(title: "歷史紀錄更新失敗", message: output)
+                return
+            }
+            if reveal {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else if !NSWorkspace.shared.open(url) {
+                self.showAlert(title: "無法開啟閱讀頁", message: "請在 Finder 開啟：\n\(url.path)")
+            }
+        }
+    }
+
+    @objc private func openHistory() {
+        refreshHistory(reveal: false)
+    }
+
+    @objc private func revealHistory() {
+        refreshHistory(reveal: true)
     }
 
     @objc private func selectWhisperModel(_ sender: NSMenuItem) {

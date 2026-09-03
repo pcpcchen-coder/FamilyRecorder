@@ -121,7 +121,7 @@ This is probably the limitation that scenario needs run into most often — both
 
 Answering "why did that sentence not appear?" currently requires writing SQL. A plausible direction is a read-only view in the menu bar showing today's rejections and their reasons.
 
-**Not planned:** a web dashboard (see below).
+The [offline history reader](history-reader.en.md) is now available without a server. **Not planned:** a network-accessible web dashboard (see below).
 
 ---
 
@@ -133,7 +133,7 @@ These are not "not scheduled yet" — they are **deliberately excluded**, becaus
 |---|---|
 | **Live cloud transcription** | It would send audio off this Mac, destroying the entire trust boundary |
 | **Uploading or remotely backing up raw audio** | Same reason |
-| **A web dashboard** | It needs a service, authentication, and network-reachable data. That conflicts with "everything stays local" |
+| **A network-accessible web dashboard** | Requires a service and authentication, expanding data exposure beyond the local offline HTML reader |
 | **Forensic voiceprints / identity verification** | Once a technology claims to verify identity, it gets used for access control and surveillance. Staying deliberately approximate |
 | **Covert recording or hiding that recording is on** | Directly contradicts a consent-first premise |
 | **Acting automatically on inferred tasks** | Tasks inferred from speech carry an error rate; acting on them turns recognition errors into real consequences |

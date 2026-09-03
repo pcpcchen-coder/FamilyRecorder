@@ -23,6 +23,11 @@ def _environment(tmp_path: Path, *, data_root: Path | None = None) -> dict[str, 
     (data / ".familyrecorder-data").write_text("", encoding="utf-8")
     (data / "transcripts").mkdir(exist_ok=True)
     (data / "transcripts" / "today.md").write_text("private", encoding="utf-8")
+    (data / "history").mkdir(exist_ok=True)
+    (data / "history" / ".familyrecorder-history").write_text(
+        "FamilyRecorder offline history v1\n", encoding="utf-8"
+    )
+    (data / "history" / "index.html").write_text("private reading copy", encoding="utf-8")
     for label in (
         "com.familyrecorder.listener",
         "com.familyrecorder.summary",
@@ -79,6 +84,7 @@ def test_keep_data_removes_runtime_and_agents_but_preserves_private_data(tmp_pat
     assert not (home / "Library" / "Application Support" / "FamilyRecorder").exists()
     assert not any((home / "Library" / "LaunchAgents").glob("com.familyrecorder.*.plist"))
     assert (home / "xvf3800-listener-data" / "transcripts" / "today.md").is_file()
+    assert (home / "xvf3800-listener-data" / "history" / "index.html").is_file()
     assert (home / ".config" / "familyrecorder" / "config.yaml").is_file()
     assert Path(_value(result.stdout, "TRASH_PATH")).is_dir()
 
@@ -101,6 +107,9 @@ def test_full_uninstall_moves_runtime_config_and_marked_data_to_trash(tmp_path: 
         trash_session / "家庭資料" / "xvf3800-listener-data" / "transcripts" / "today.md"
     ).is_file()
     assert (trash_session / "設定" / "familyrecorder" / "config.yaml").is_file()
+    assert (
+        trash_session / "家庭資料" / "xvf3800-listener-data" / "history" / "index.html"
+    ).is_file()
 
 
 def test_marked_custom_data_directory_keeps_unrelated_files(tmp_path: Path) -> None:
@@ -119,6 +128,22 @@ def test_marked_custom_data_directory_keeps_unrelated_files(tmp_path: Path) -> N
     assert result.returncode == 0, result.stderr
     assert (shared / "unrelated.txt").read_text(encoding="utf-8") == "keep me"
     assert not (shared / "transcripts").exists()
+    assert not (shared / "history").exists()
+
+
+def test_unowned_history_in_shared_directory_is_preserved(tmp_path: Path) -> None:
+    shared = tmp_path / "home" / "Documents"
+    environment = _environment(tmp_path, data_root=shared)
+    (shared / "history" / ".familyrecorder-history").unlink()
+    result = subprocess.run(
+        ["/bin/bash", str(SCRIPT), "uninstall", "all"],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (shared / "history" / "index.html").is_file()
 
 
 def test_marked_dedicated_custom_data_directory_moves_as_one_unit(tmp_path: Path) -> None:

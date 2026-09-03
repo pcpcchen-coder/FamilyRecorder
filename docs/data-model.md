@@ -26,6 +26,7 @@ FamilyRecorder 把資料分成兩類：**人類閱讀的 Markdown**，以及**�
 ├── audio/YYYY-MM-DD/HHMMSS_microseconds.wav
 ├── transcripts/YYYY-MM-DD.md
 ├── summaries/YYYY-MM-DD.md
+├── history/index.html                     # 可重建的離線閱讀首頁；同目錄含日期頁
 ├── placement-tests/YYYYMMDD-HHMMSS/
 ├── speaker-profiles/speaker-<雜湊>.json   # 本機聲音特徵；無原始註冊音訊
 ├── control.json                           # 僅在暫停時存在
@@ -38,6 +39,7 @@ FamilyRecorder 把資料分成兩類：**人類閱讀的 Markdown**，以及**�
 | `audio/` | 16 kHz mono PCM16 WAV，依日期分資料夾 | ❌ 從不 |
 | `transcripts/` | 每日 Markdown 逐字稿，含時間／人別／方向標題 | ⚠️ 文字每日一次送往摘要 |
 | `summaries/` | 每日 Markdown 摘要 | ❌ 從不（這是產出，不是輸入） |
+| `history/` | [離線閱讀副本](history-reader.md)，原始音訊 retention 不影響；完整解除安裝涵蓋 | ❌ 從不 |
 | `placement-tests/` | 擺位測試的錄音與 `report.md` | ❌ 從不 |
 | `speaker-profiles/` | 權限 `0600` 的 JSON 特徵向量，**不可播放** | ❌ 從不 |
 | `control.json` | 暫停狀態與到期時間 | ❌ 從不 |

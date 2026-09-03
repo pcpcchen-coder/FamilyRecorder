@@ -82,6 +82,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 |---|---|
 | `summary` | 整理 Mac 本地日期的**昨天**，與每日排程相同 |
 | `summary --date YYYY-MM-DD` | 整理指定日期 |
+| `build-history` | 更新離線 `history/index.html` 與日期頁，輸出首頁路徑；不呼叫 AI、不更動來源檔案 |
 
 ```bash
 "$FR" --config "$CONFIG" summary

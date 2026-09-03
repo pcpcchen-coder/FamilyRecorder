@@ -82,6 +82,7 @@ Pause state is written to `data_dir/control.json`. The listener checks it once p
 |---|---|
 | `summary` | Summarize **yesterday** in the Mac's local date, same as the daily schedule |
 | `summary --date YYYY-MM-DD` | Summarize a specific date |
+| `build-history` | Refresh offline `history/index.html` and date pages, printing the homepage path; no AI calls or source edits |
 
 ```bash
 "$FR" --config "$CONFIG" summary

@@ -140,6 +140,13 @@ move_config() {
   done
 }
 
+history_is_owned() {
+  [[ ! -L "$DATA_ROOT/history" && -f "$DATA_ROOT/history/.familyrecorder-history" ]] || return 1
+  local marker
+  IFS= read -r marker < "$DATA_ROOT/history/.familyrecorder-history" || return 1
+  [[ "$marker" == "FamilyRecorder offline history v1" ]]
+}
+
 data_root_is_dedicated() {
   [[ "$DATA_ROOT" == "$DEFAULT_DATA_ROOT" ]] && return 0
   [[ -f "$DATA_ROOT/.familyrecorder-data" ]] || return 1
@@ -147,6 +154,9 @@ data_root_is_dedicated() {
   while IFS= read -r child; do
     name="$(basename "$child")"
     case "$name" in
+      history)
+        history_is_owned || return 1
+        ;;
       audio|transcripts|summaries|logs|speaker-profiles|placement-tests|\
         listener.sqlite3|listener.sqlite3-shm|listener.sqlite3-wal|control.json|\
         .familyrecorder-data)
@@ -172,9 +182,12 @@ move_data() {
   # unrelated files.
   local entry
   for entry in \
-    audio transcripts summaries logs speaker-profiles placement-tests \
+    audio transcripts summaries history logs speaker-profiles placement-tests \
     listener.sqlite3 listener.sqlite3-shm listener.sqlite3-wal control.json \
     .familyrecorder-data; do
+    if [[ "$entry" == "history" ]] && ! history_is_owned; then
+      continue
+    fi
     move_into "$DATA_ROOT/$entry" "$trash_session/家庭資料/FamilyRecorder-files"
   done
   rmdir "$DATA_ROOT" 2>/dev/null || true

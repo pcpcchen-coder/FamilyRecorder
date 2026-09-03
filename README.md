@@ -153,6 +153,7 @@ FamilyRecorder 的核心其實是一個通用的**「當下記錄器」（moment
 </td><td width="50%" valign="top">
 
 **🖥️ 原生 macOS 體驗**
+- [歷史紀錄閱讀頁](docs/history-reader.md)：選單一鍵開啟，日期／摘要搜尋、逐字稿切換；摘要完成後自動更新，完全離線
 - 選單列圖示：狀態、定時暫停、開資料夾、切模型、立即摘要
 - 三個使用者層級 LaunchAgent，不是 root daemon
 - Google Calendar 候選事件：逐筆確認，或一次同意後自動加入

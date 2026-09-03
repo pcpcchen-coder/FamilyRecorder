@@ -20,6 +20,8 @@ This is the only path that leaves this Mac: **once a day, transcript text only.*
 
 ## What the summary contains
 
+Successful summaries automatically refresh the [offline history reader](history-reader.en.md), available from “閱讀歷史紀錄…” in the menu. An HTML refresh failure preserves the completed summary and does not repeat AI or calendar calls; retry separately with `build-history`.
+
 The default output is Traditional Chinese Markdown containing:
 
 1. **Event timeline** — approximate times and likely speakers preserved
