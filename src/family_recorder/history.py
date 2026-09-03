@@ -1,7 +1,7 @@
 """Build an offline, disposable reading view from the existing Markdown journals.
 
-This module deliberately has no audio, database, network or summary-client access.
-Only canonical date-named Markdown files become content; HTML in them is always text.
+This module has no audio, network or summary-client access. Inputs are canonical
+date-named Markdown and a read-only calendar text snapshot; HTML is always text.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from datetime import date, datetime
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
+
+from family_recorder.history_data import HistoryCalendarEvent, extract_brief, read_calendar_snapshot
 
 MARKER = "FamilyRecorder offline history v1\n"
 PAGE_MARKER = "<!-- FamilyRecorder generated history v1 -->\n"
@@ -155,7 +157,7 @@ def _document(title: str, body: str) -> str:
 <header class="brand"><a href="index.html">◉ FamilyRecorder</a>
 <span class="privacy">僅限本機 · 離線閱讀</span></header>
 {body}
-<footer>這是本機 Markdown 的閱讀副本，不會上傳資料或讀取音訊。<br>
+<footer>這是本機文字與行事曆寫入紀錄的閱讀副本，不會上傳資料或讀取音訊。<br>
 需更新內容時，請再次點選選單列「閱讀歷史紀錄…」，再重新整理瀏覽器。
 人別與方向是近似線索，請以原始內容與實際情況為準。</footer>
 </div><script>{script}</script></body></html>
@@ -234,12 +236,76 @@ def _preview(text: str) -> str:
     return readable[:160] + ("…" if len(readable) > 160 else "")
 
 
+def _event_time(event: HistoryCalendarEvent) -> str:
+    try:
+        start = datetime.fromisoformat(event.starts_at)
+        end = datetime.fromisoformat(event.ends_at)
+    except ValueError:
+        return f"時間格式待確認：{event.starts_at} → {event.ends_at}"
+    if event.all_day:
+        return f"全天 · {start:%Y-%m-%d} → {end:%Y-%m-%d}（結束日不含）"
+
+    def display(value: datetime) -> str:
+        offset = value.strftime("%z")
+        zone = f"UTC{offset[:3]}:{offset[3:]}" if offset else "時區未記錄"
+        return f"{value:%Y-%m-%d %H:%M} {zone}"
+
+    return f"{display(start)} → {display(end)}"
+
+
+def _calendar_panel(events: list[HistoryCalendarEvent], unavailable: bool) -> str:
+    note = (
+        '<p class="hint">依摘要來源日期歸檔；下列「活動時間」可能是未來日期。'
+        "「已加入」表示 App 已收到系統行事曆寫入成功回覆，不代表 Google 雲端同步已完成。"
+        "這不是即時查詢；日曆中後續修改或刪除，請到 Google Calendar 確認。"
+        "既有紀錄未保存實際日曆名稱，此處不以建議日曆冒充實際目的地。</p>"
+    )
+    if unavailable:
+        return (
+            note
+            + '<p class="notice">行事曆紀錄暫時無法讀取，並非沒有事件。請稍後重新開啟閱讀頁。</p>'
+        )
+    result = [note]
+    for status, label in (
+        ("created", "已加入行事曆"),
+        ("pending", "尚待建立／確認"),
+        ("failed", "建立失敗"),
+        ("dismissed", "已略過"),
+    ):
+        selected = [event for event in events if event.status == status]
+        if status != "created" and not selected:
+            continue
+        content = f"<h3>{label} · {len(selected)} 筆</h3>"
+        for event in selected:
+            member = html.escape(event.member_name or "未指定")
+            content += f'''<article class="calendar-event" data-status="{status}">
+<h4>{html.escape(event.title)}</h4>
+<p class="event-time">活動時間：{html.escape(_event_time(event))}</p>
+<p class="event-member">相關成員：{member}（非說話者身分確認）</p>
+<p class="event-notes">{html.escape(event.notes or "無備註")}</p></article>'''
+        if not selected:
+            content += (
+                '<p class="empty">這一天沒有已成功寫入的事件紀錄；摘要提到的行程不會自動算入。</p>'
+            )
+        if status != "created":
+            content = (
+                f'<details class="calendar-other"><summary>{label} · {len(selected)} 筆</summary>'
+                f"{content}</details>"
+            )
+        result.append(content)
+    return "".join(result)
+
+
 def build_history(data_dir: Path) -> Path:
     """Regenerate the owned view, leaving source Markdown/SQLite untouched."""
     with _locked_directory(data_dir) as directory:
         transcripts = _sources(data_dir, "transcripts")
         summaries = _sources(data_dir, "summaries")
-        days = sorted(transcripts.keys() | summaries.keys(), reverse=True)
+        calendar = read_calendar_snapshot(data_dir)
+        calendar_days: dict[str, list[HistoryCalendarEvent]] = {}
+        for event in calendar.events:
+            calendar_days.setdefault(event.summary_date, []).append(event)
+        days = sorted(transcripts.keys() | summaries.keys() | calendar_days.keys(), reverse=True)
         cards: list[str] = []
         months = sorted({day[:7] for day in days}, reverse=True)
         summary_count = 0
@@ -248,6 +314,18 @@ def build_history(data_dir: Path) -> Path:
             summary = summaries[day].read_text(encoding="utf-8") if day in summaries else ""
             has_summary = bool(summary.strip())
             has_transcript = bool(transcript.strip())
+            brief = extract_brief(summary)
+            events = calendar_days.get(day, [])
+            created = [event for event in events if event.status == "created"]
+            default_panel = (
+                "brief"
+                if brief.text
+                else "summary"
+                if has_summary
+                else "transcript"
+                if has_transcript
+                else "calendar"
+            )
             summary_count += has_summary
             stale = (
                 has_summary
@@ -256,15 +334,42 @@ def build_history(data_dir: Path) -> Path:
             )
             label = "逐字稿有新內容" if stale else ("已有摘要" if has_summary else "尚無摘要")
             weekday = "一二三四五六日"[date.fromisoformat(day).weekday()]
-            preview = _preview(summary) if has_summary else "尚未產生摘要，可先閱讀當天逐字稿。"
-            search = html.escape(day + " " + summary.lower(), quote=True)
+            preview = brief.text or (_preview(summary) if has_summary else "尚未產生摘要。")
+            preview_label = (
+                brief.source_label
+                if brief.text
+                else "完整摘要節錄"
+                if has_summary
+                else "200 字摘要"
+            )
+            calendar_text = " ".join(
+                f"{event.title} {event.starts_at} {event.ends_at} {event.member_name} {event.notes}"
+                for event in events
+            )
+            search = html.escape(f"{day} {summary} {calendar_text}".lower(), quote=True)
+            calendar_label = (
+                "行事曆狀態暫時無法讀取"
+                if calendar.unavailable
+                else f"已加入行事曆 · {len(created)} 筆"
+            )
+            calendar_preview = "".join(
+                f"<li>{html.escape(event.title)}<small>{html.escape(_event_time(event))}</small></li>"
+                for event in created[:2]
+            )
+            calendar_preview = (
+                f'<ul class="calendar-preview">{calendar_preview}</ul>' if calendar_preview else ""
+            )
             state = "stale" if stale else ("ready" if has_summary else "pending")
             cards.append(f"""<article class="day-card" data-month="{day[:7]}"
- data-state="{state}" data-search="{search}">
+ data-state="{state}" data-calendar="{len(created)}" data-search="{search}">
 <div><a class="date-link" href="{day}.html">{day} <span>週{weekday}</span></a>
-<p class="preview">{html.escape(preview)}</p></div>
+<div class="card-brief"><h2>{preview_label}</h2>
+<p class="preview">{html.escape(preview)}{"…" if brief.truncated else ""}</p></div>
+<div class="card-calendar"><a href="{day}.html#calendar">{calendar_label} →</a>
+{calendar_preview}</div></div>
 <div class="card-actions"><span class="badge {state}">{label}</span>
-<a href="{day}.html#{"summary" if has_summary else "transcript"}">閱讀 →</a></div>
+<a href="{day}.html#{default_panel}">閱讀 →</a>
+<a href="{day}.html#brief">200 字摘要</a></div>
 </article>""")
             previous = (
                 f'<a href="{days[index + 1]}.html">← 較早一天</a>' if index + 1 < len(days) else ""
@@ -278,10 +383,14 @@ def build_history(data_dir: Path) -> Path:
                 )
                 if available
             )
-            updated = max(
+            updated = [
                 path[day].stat().st_mtime for path in (transcripts, summaries) if day in path
+            ]
+            snapshot = (
+                datetime.fromtimestamp(max(updated)).strftime("%Y-%m-%d %H:%M")
+                if updated
+                else "僅有行事曆寫入紀錄"
             )
-            snapshot = datetime.fromtimestamp(updated).strftime("%Y-%m-%d %H:%M")
             notice = (
                 '<p class="notice">逐字稿有新內容，尚未包含於這份摘要；請切換逐字稿閱讀，'
                 "或從選單列重新執行摘要。</p>"
@@ -298,14 +407,32 @@ def build_history(data_dir: Path) -> Path:
                 if has_transcript
                 else ('<p class="empty">這一天沒有逐字稿內容。</p>')
             )
+            brief_html = (
+                f'<p class="brief-text">{html.escape(brief.text)}</p>'
+                f'<p class="hint">{brief.source_label} · {len(brief.text)} 字元'
+                + (
+                    " · 原文超過 200 字，這裡只呈現前 200 字；請切換完整摘要。"
+                    if brief.truncated
+                    else ""
+                )
+                + "</p>"
+                if brief.text
+                else (
+                    '<p class="empty">尚無獨立的 200 字摘要。請切換完整摘要或逐字稿閱讀；'
+                    "不會自動呼叫 AI 補寫。</p>"
+                )
+            )
+            calendar_count = str(len(created)) if not calendar.unavailable else "?"
             body = f"""<nav class="day-nav"><a href="index.html">← 全部日期</a>
 <div>{previous} {following}</div></nav>
 <h1>{day} <span class="weekday">週{weekday}</span></h1>
-<p class="subtitle">來源最後修改：{snapshot} · 原有時間、人別與方向標記完整保留</p>
+<p class="subtitle">文字來源最後修改：{snapshot} · 原有時間、人別與方向標記完整保留</p>
 {notice}
-<div class="reader-tools" data-default="{"summary" if has_summary else "transcript"}">
+<div class="reader-tools" data-default="{default_panel}">
 <div class="tabs" role="group" aria-label="閱讀內容">
-<button type="button" data-panel="summary">每日摘要</button>
+<button type="button" data-panel="brief">200 字摘要</button>
+<button type="button" data-panel="calendar">Google Calendar · {calendar_count}</button>
+<button type="button" data-panel="summary">完整摘要</button>
 <button type="button" data-panel="transcript">完整逐字稿</button></div>
 <div class="text-tools"><button type="button" id="font-size">放大字體</button>
 <button type="button" id="print">列印／存成 PDF</button></div>
@@ -314,10 +441,16 @@ def build_history(data_dir: Path) -> Path:
 <button type="button" id="next-match">下一筆</button>
 <span id="match-count" role="status" aria-live="polite"></span></div>
 </div>
-<noscript><p class="notice">JavaScript 未啟用，以下依序顯示摘要與逐字稿。</p></noscript>
+<noscript><p class="notice">JavaScript 未啟用，
+以下依序顯示短摘要、行事曆、完整摘要與逐字稿。</p></noscript>
 <main class="reader">
-<section id="summary" class="reading-panel" aria-label="每日摘要">
-<h2 class="section-label">每日摘要</h2>{summary_html}</section>
+<section id="brief" class="reading-panel" aria-label="200 字摘要">
+<h2 class="section-label">200 字摘要</h2>{brief_html}</section>
+<section id="calendar" class="reading-panel" aria-label="Google Calendar">
+<h2 class="section-label">Google Calendar · 本機寫入紀錄</h2>
+{_calendar_panel(events, calendar.unavailable)}</section>
+<section id="summary" class="reading-panel" aria-label="完整摘要">
+<h2 class="section-label">完整摘要</h2>{summary_html}</section>
 <section id="transcript" class="reading-panel" aria-label="完整逐字稿">
 <h2 class="section-label">完整逐字稿</h2>{transcript_html}</section>
 </main><p class="source-links">{source_links}</p>"""
@@ -330,19 +463,30 @@ def build_history(data_dir: Path) -> Path:
             if days
             else "還沒有紀錄。完成錄音後，再從選單列開啟此頁即可。"
         )
+        calendar_warning = (
+            '<p class="notice">行事曆紀錄暫時無法讀取，已加入事件篩選暫不可用。</p>'
+            if calendar.unavailable
+            else ""
+        )
         body = f"""<div class="hero"><div><p class="eyebrow">YOUR FAMILY JOURNAL</p>
-<h1>把日常，慢慢讀回來。</h1><p class="subtitle">每天的摘要與逐字稿，依日期整理在這裡。</p>
+<h1>把日常，慢慢讀回來。</h1>
+<p class="subtitle">先讀 200 字重點，再看已加入的行程；完整紀錄仍在。</p>
 </div>{latest}</div>
 <div class="stats"><span><strong>{len(days)}</strong> 天紀錄</span>
 <span><strong>{summary_count}</strong> 份摘要</span><span>更新於 {generated}</span></div>
 <section class="filters" aria-label="篩選紀錄">
-<label>搜尋日期／摘要<input id="search" type="search"
+<label>搜尋日期／摘要／行事曆<input id="search" type="search"
  placeholder="例如 2026-09、包裹、家人姓名"></label>
 <label>月份<select id="month"><option value="">全部月份</option>{options}</select></label>
 <label>摘要狀態<select id="state"><option value="">全部紀錄</option>
 <option value="ready">已有摘要</option><option value="pending">尚無摘要</option>
 <option value="stale">逐字稿有新內容</option></select></label>
-</section><p class="hint">搜尋涵蓋日期與摘要全文；逐字稿請點入當天後使用「頁內尋找」。</p>
+</section><label class="calendar-filter">
+<input id="calendar-only" type="checkbox" {"disabled" if calendar.unavailable else ""}>
+只看有已加入行事曆事件的日期</label>
+<p class="hint">日期依摘要來源日排列，不是行程發生日。
+搜尋涵蓋摘要全文與行事曆紀錄；逐字稿請點入當天尋找。</p>
+{calendar_warning}
 <p id="result-count" role="status" aria-live="polite">共 {len(days)} 天</p>
 <main class="day-list">{"".join(cards)}</main>
 <p id="no-results" class="empty" {"hidden" if days else ""}>
@@ -351,7 +495,7 @@ def build_history(data_dir: Path) -> Path:
         _atomic_write(directory / "index.html", _document("歷史紀錄", body))
         # Delete only our generated date pages whose sources were removed. Never
         # remove source files or unrelated files a user placed in this directory.
-        for path in directory.glob("*.html"):
+        for path in () if calendar.unavailable else directory.glob("*.html"):
             if not DATE_NAME.fullmatch(path.stem) or path.stem in days or path.is_symlink():
                 continue
             with path.open(encoding="utf-8") as handle:

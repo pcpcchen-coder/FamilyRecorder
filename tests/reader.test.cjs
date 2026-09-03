@@ -10,7 +10,22 @@ const root = path.resolve(__dirname, "..");
 const data = fs.mkdtempSync(path.join(os.tmpdir(), "familyrecorder-reader-test-"));
 fs.cpSync(path.join(__dirname, "fixtures/history"), data, {recursive: true});
 execFileSync(process.env.FR_TEST_PYTHON || "python3", ["-c",
-  "import sys; from pathlib import Path; from family_recorder.history import build_history; build_history(Path(sys.argv[1]))",
+  `import sys
+from pathlib import Path
+from datetime import date
+from family_recorder.history import build_history
+from family_recorder.storage import Storage
+from family_recorder.config import StorageConfig
+root = Path(sys.argv[1])
+with Storage(StorageConfig(data_dir=root)) as storage:
+    storage.replace_pending_calendar_candidates(date(2026, 9, 2), [
+        dict(title=title, starts_at="2026-10-01T09:00:00+08:00",
+             ends_at="2026-10-01T10:00:00+08:00", all_day=False,
+             member_name="家人甲", notes="虛構的行事曆備註")
+        for title in ("牙齒檢查", "尚未決定的出遊")
+    ])
+    storage.mark_calendar_candidate(storage.pending_calendar_candidates()[0].id, "created")
+build_history(root)`,
   data], {cwd: root, env: {...process.env, PYTHONPATH: path.join(root, "src")}});
 after(() => fs.rmSync(data, {recursive: true, force: true}));
 function load(name, hash = "") {
@@ -45,7 +60,9 @@ test("homepage combines summary search/month/status filters and reset", () => {
 test("day defaults to available content; tabs, anchors, font size and print work", () => {
   const dom = load("2026-09-02.html");
   const doc = dom.window.document;
-  assert.equal(doc.querySelector("#summary").hidden, false);
+  assert.equal(doc.querySelector("#brief").hidden, false);
+  assert.equal(doc.querySelector("#summary").hidden, true);
+  assert.equal(doc.querySelector("#calendar").hidden, true);
   assert.equal(doc.querySelector("#transcript").hidden, true);
   doc.querySelector('[data-panel="transcript"]').click();
   assert.equal(doc.querySelector("#transcript").hidden, false);
@@ -63,6 +80,41 @@ test("day defaults to available content; tabs, anchors, font size and print work
   const anchor = load("2026-09-02.html", "#transcript");
   assert.equal(anchor.window.document.querySelector("#transcript").hidden, false);
   anchor.window.close();
+});
+test("brief and calendar have separate views, search and a created-only date filter", () => {
+  const dom = load("index.html");
+  const doc = dom.window.document;
+  const checkbox = doc.querySelector("#calendar-only");
+  checkbox.click();
+  assert.equal(doc.querySelectorAll(".day-card:not([hidden])").length, 1);
+  const card = doc.querySelector(".day-card:not([hidden])");
+  assert.match(card.querySelector(".card-brief").textContent, /今天確認接送安排/);
+  assert.match(card.querySelector(".card-calendar").textContent, /已加入行事曆 · 1 筆/);
+  assert.doesNotMatch(card.querySelector(".card-calendar").textContent, /尚未決定/);
+  change(dom, "#search", "虛構的行事曆備註");
+  assert.equal(doc.querySelectorAll(".day-card:not([hidden])").length, 1);
+  change(dom, "#month", "2026-08", "change");
+  assert.equal(doc.querySelectorAll(".day-card:not([hidden])").length, 0);
+  dom.window.close();
+
+  const calendar = load("2026-09-02.html", "#calendar");
+  const page = calendar.window.document;
+  assert.equal(page.querySelector("#calendar").hidden, false);
+  assert.equal(page.querySelector("#brief").hidden, true);
+  assert.equal(page.querySelectorAll('#calendar [data-status="created"]').length, 1);
+  assert.equal(page.querySelectorAll('#calendar [data-status="pending"]').length, 1);
+  assert.equal(page.querySelector(".calendar-other").open, false);
+  change(calendar, "#find", "牙齒檢查");
+  page.querySelector("#next-match").click();
+  assert.equal(page.querySelectorAll("#calendar mark").length, 1);
+  change(calendar, "#find", "尚未決定的出遊");
+  page.querySelector("#next-match").click();
+  assert.equal(page.querySelector(".calendar-other").open, true);
+  page.querySelector('[data-panel="brief"]').click();
+  assert.equal(page.querySelector("#brief").hidden, false);
+  assert.doesNotMatch(page.querySelector("#brief").textContent, /虛構的行事曆備註/);
+  assert.equal(page.querySelectorAll("#calendar mark").length, 0);
+  calendar.window.close();
 });
 test("find highlights text safely, cycles multiple matches, and resets when switching", () => {
   const dom = load("2026-09-02.html", "#transcript");

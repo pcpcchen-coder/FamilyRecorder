@@ -41,6 +41,22 @@ h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.35; letter-spacing: -.7px
 .date-link { font-size: 21px; font-weight: 700; text-decoration: none; }
 .date-link span, .weekday { font-size: 14px; font-weight: normal; margin-left: 10px; color: var(--muted); }
 .preview { margin: 9px 0 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.card-brief h2 { font-size: 12px; color: var(--muted); margin: 16px 0 0; font-weight: normal; }
+.card-calendar { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; }
+.calendar-preview { margin: 8px 0 0; padding-left: 18px; }
+.calendar-preview small { display: block; color: var(--muted); }
+.calendar-filter { display: flex; align-items: center; gap: 7px; margin-top: 18px; font-size: 14px; }
+.calendar-event { border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 10px; padding: 18px 22px; margin: 16px 0; }
+.calendar-event h4 { margin: 0 0 12px; font-size: 1.1em; }
+.calendar-event p { margin: 8px 0; }
+.event-time { font-weight: 650; }
+.event-member { color: var(--muted); font-size: .85em; }
+.reader .event-notes { white-space: pre-wrap; }
+.calendar-other { margin: 18px 0; }
+.calendar-other summary { cursor: pointer; color: var(--muted); }
+.calendar-other .calendar-event { border-left-color: var(--line); }
+.brief-text { font-size: 1.15em; line-height: 2; }
 .card-actions { display: flex; flex-direction: column; justify-content: space-between;
   align-items: end; gap: 14px; font-size: 14px; }
 .badge { font-size: 12px; border-radius: 20px; padding: 3px 10px; background: var(--tint); }
@@ -55,7 +71,7 @@ footer { padding: 28px 0 36px; margin-top: 32px; border-top: 1px solid var(--lin
 .reader-tools { position: sticky; top: 0; z-index: 1; margin: 24px 0 18px; padding: 14px 0;
   background: var(--bg); border-bottom: 1px solid var(--line);
   display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
-.tabs, .text-tools { display: flex; gap: 7px; }
+.tabs, .text-tools { display: flex; flex-wrap: wrap; gap: 7px; }
 .tabs button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
 .text-tools button { font-size: 13px; }
 .find-bar { width: 100%; display: flex; align-items: center; gap: 9px; font-size: 13px; flex-wrap: wrap; }

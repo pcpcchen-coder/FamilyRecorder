@@ -4,6 +4,7 @@ const search = document.getElementById("search");
 if (search) {
   const month = document.getElementById("month");
   const state = document.getElementById("state");
+  const calendarOnly = document.getElementById("calendar-only");
   const cards = [...document.querySelectorAll(".day-card")];
   const filter = () => {
     const query = search.value.trim().toLocaleLowerCase();
@@ -11,7 +12,8 @@ if (search) {
     for (const card of cards) {
       const show = (!query || card.dataset.search.includes(query)) &&
         (!month.value || card.dataset.month === month.value) &&
-        (!state.value || card.dataset.state === state.value);
+        (!state.value || card.dataset.state === state.value) &&
+        (calendarOnly.disabled || !calendarOnly.checked || Number(card.dataset.calendar) > 0);
       card.hidden = !show;
       if (show) count++;
     }
@@ -21,6 +23,7 @@ if (search) {
   search.addEventListener("input", filter);
   month.addEventListener("change", filter);
   state.addEventListener("change", filter);
+  calendarOnly.addEventListener("change", filter);
   window.addEventListener("pageshow", filter);
 }
 
@@ -99,6 +102,8 @@ if (toolbar) {
     if (current >= 0) matches[current].classList.remove("current");
     current = (current + 1) % matches.length;
     matches[current].classList.add("current");
+    const disclosure = matches[current].closest("details");
+    if (disclosure) disclosure.open = true;
     matches[current].scrollIntoView({block: "center"});
     counter.textContent = `${current + 1} / ${matches.length} 筆`;
   }

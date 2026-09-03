@@ -719,6 +719,14 @@ def main(argv: list[str] | None = None) -> int:
                 )
             if not updated:
                 raise ValueError("找不到待確認的行事曆事件")
+            try:
+                build_history(config.storage.data_dir)
+            except (OSError, UnicodeError, HistoryError):
+                # The event is already committed. Never repeat an external write
+                # just because the disposable reader could not be refreshed.
+                logging.getLogger(__name__).warning(
+                    "行事曆狀態已保存，但閱讀頁更新失敗；請稍後從選單重新開啟閱讀頁。"
+                )
             print(
                 "行事曆事件已建立" if args.command == "calendar-event-created" else "候選事件已略過"
             )
