@@ -12,6 +12,7 @@ Every document exists in both languages: `name.md` is Traditional Chinese, `name
 |---|---|
 | Understand what it does first | [Project home](../README.en.md) |
 | **Install and use it** | [Getting started](getting-started.en.md) |
+| **Read past records conveniently** | [Offline history reader](history-reader.en.md) |
 | Confirm the microphone is set up correctly | [Hardware and capture](hardware.en.md) |
 | Tune sensitivity, retention, summary time | [Configuration reference](configuration.en.md) |
 | Understand how the daily summary is produced | [Daily summary and calendar](daily-summary.en.md) |

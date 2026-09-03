@@ -42,6 +42,15 @@ Development additionally needs `build`, `pytest`, `pytest-cov`, and `ruff`.
 
 ## Testing strategy
 
+Offline reader interaction tests use Node.js 22+ and development-only jsdom; they do not open a browser or access the network:
+
+```bash
+npm ci --ignore-scripts
+FR_TEST_PYTHON=.venv/bin/python npm test
+```
+
+The shipped app needs neither Node.js nor jsdom. See [history reader acceptance](history-reader.en.md#acceptance) for visual and offline-file checks. `history.py` builds local HTML without audio/database/network access; `history_assets/` CSS and JavaScript ship inside the wheel.
+
 **CI does not depend on physical hardware.** All of the following have isolated tests:
 
 - Device selection and scoring

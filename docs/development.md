@@ -38,6 +38,15 @@
 
 開發額外需要 `build`、`pytest`、`pytest-cov`、`ruff`。
 
+離線閱讀頁的互動測試使用 Node.js 22+ 與僅供開發的 jsdom；不開啟瀏覽器或網路：
+
+```bash
+npm ci --ignore-scripts
+FR_TEST_PYTHON=.venv/bin/python npm test
+```
+
+正式 App 不需要 Node.js／jsdom。視覺與離線檔案開啟驗收見[歷史紀錄閱讀頁](history-reader.md#驗收)。
+
 ---
 
 ## 測試策略
@@ -97,6 +106,8 @@ src/family_recorder/
 ├── storage.py          # SQLite schema／migration、Markdown、retention
 ├── listener.py         # 常駐主迴圈
 ├── summary.py          # 每日摘要、輸出契約、行事曆擷取
+├── history.py          # 本機靜態 HTML 閱讀副本；不讀音訊／資料庫、不連網
+├── history_assets/     # 打包至 wheel 的離線 CSS／JavaScript
 ├── placement.py        # 擺位測試與 CER
 ├── model_manager.py    # 模型清單、下載、驗證
 ├── config_editor.py    # 保留註解的目標式 YAML 編輯

@@ -25,6 +25,7 @@ from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
 from family_recorder.control import pause_recording, read_pause_state, resume_recording
 from family_recorder.devices import format_devices, list_input_devices, select_input_device
 from family_recorder.direction import OutputRoute, XVF3800USBReader, capture_direction
+from family_recorder.history import HistoryError, build_history, history_index_path
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
@@ -56,6 +57,9 @@ def _parser() -> argparse.ArgumentParser:
 
     summary = commands.add_parser("summary", help="Summarize a transcript using text only")
     summary.add_argument("--date", type=date.fromisoformat, dest="target_date")
+    commands.add_parser(
+        "build-history", help="Refresh the offline HTML history reader (no AI call)"
+    )
 
     pause = commands.add_parser("pause", help="Temporarily pause microphone capture")
     pause.add_argument("--minutes", type=int, help="Automatically resume after this duration")
@@ -401,6 +405,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "data_dir": str(data_dir),
         "transcript_dir": str(data_dir / "transcripts"),
         "summary_dir": str(data_dir / "summaries"),
+        "history_index": str(history_index_path(data_dir)),
         "audio_dir": str(data_dir / "audio"),
         "log_dir": str(data_dir / "logs"),
         "today_transcript": str(data_dir / "transcripts" / f"{today.isoformat()}.md"),
@@ -456,6 +461,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         config = _load(args.config)
+        if args.command == "build-history":
+            try:
+                print(build_history(config.storage.data_dir))
+            except HistoryError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            return 0
         if args.command == "listen":
             run_listener(config, once=args.once)
             return 0
@@ -707,6 +719,14 @@ def main(argv: list[str] | None = None) -> int:
                 )
             if not updated:
                 raise ValueError("找不到待確認的行事曆事件")
+            try:
+                build_history(config.storage.data_dir)
+            except (OSError, UnicodeError, HistoryError):
+                # The event is already committed. Never repeat an external write
+                # just because the disposable reader could not be refreshed.
+                logging.getLogger(__name__).warning(
+                    "行事曆狀態已保存，但閱讀頁更新失敗；請稍後從選單重新開啟閱讀頁。"
+                )
             print(
                 "行事曆事件已建立" if args.command == "calendar-event-created" else "候選事件已略過"
             )

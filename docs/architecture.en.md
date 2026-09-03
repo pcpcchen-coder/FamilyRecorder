@@ -588,7 +588,7 @@ These are not "not yet built" — they are **deliberately excluded**:
 - ❌ Live cloud transcription
 - ❌ Uploading or remotely backing up raw audio
 - ❌ Acting on inferred tasks or reminders
-- ❌ A web dashboard
+- ❌ A network-accessible web dashboard; the local static [HTML reader](history-reader.en.md) runs no server
 
 ---
 

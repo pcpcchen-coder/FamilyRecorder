@@ -58,6 +58,9 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert "lastCalendarAccessError" in source
     assert "restoreCalendarAccessIfNeeded" in source
     assert "EKEventStore.authorizationStatus(for: .event) == .notDetermined" in source
+    assert 'runRecorderAsync(["build-history"])' in source
+    assert '"閱讀歷史紀錄…"' in source
+    assert "activateFileViewerSelecting([url])" in source
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:

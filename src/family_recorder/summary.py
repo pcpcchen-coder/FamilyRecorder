@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from family_recorder.config import AppConfig, SummaryConfig
+from family_recorder.history import HistoryError, build_history
 from family_recorder.storage import Storage
 
 
@@ -512,4 +513,10 @@ class DailySummaryRunner:
             )
             model = self.config.summary.model or "codex-default (ChatGPT)"
             storage.record_summary(target_date, summary_path, model)
+            try:
+                build_history(self.config.storage.data_dir)
+            except (OSError, UnicodeError, HistoryError) as exc:
+                # A reader failure must not discard a completed summary or
+                # trigger another cloud/calendar request just to repair HTML.
+                LOGGER.warning("Summary saved, but history refresh failed: %s", exc)
             return summary_path

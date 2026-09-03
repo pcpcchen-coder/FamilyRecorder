@@ -28,6 +28,8 @@ After installation a round waveform icon appears in the top-right corner. Day-to
 
 ## Menu actions
 
+**閱讀歷史紀錄…** (Read history) refreshes and opens the offline HTML homepage. **打開… → 歷史紀錄首頁的位置** reveals `history/index.html` in Finder. See the [history reader](history-reader.en.md) for date/month filters, summary search and transcript reading.
+
 ### Status and data
 
 - Shows **recording / paused / service not running**, plus the current Whisper and summary models.

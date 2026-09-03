@@ -173,7 +173,7 @@ These are not "not yet built" — they are **deliberately excluded**:
 - ❌ Live cloud transcription
 - ❌ Uploading or remotely backing up raw audio
 - ❌ Acting on inferred tasks or reminders
-- ❌ A web dashboard
+- ❌ A network-accessible web dashboard; the [offline history reader](history-reader.en.md) is a local sensitive-text copy with no network access
 
 ### Explicitly prohibited uses
 

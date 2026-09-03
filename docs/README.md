@@ -12,6 +12,7 @@
 |---|---|
 | 先了解它能做什麼 | [專案首頁](../README.md) |
 | **裝起來用** | [安裝與上手](getting-started.md) |
+| **方便閱讀過去紀錄** | [離線歷史紀錄閱讀頁](history-reader.md) |
 | 確認麥克風有沒有裝對 | [硬體與收音](hardware.md) |
 | 調整靈敏度、保留天數、摘要時間 | [設定參考](configuration.md) |
 | 看懂每日摘要怎麼產生 | [每日摘要與行事曆](daily-summary.md) |

@@ -26,6 +26,7 @@ FamilyRecorder splits data into two kinds: **Markdown for humans** and a **query
 ├── audio/YYYY-MM-DD/HHMMSS_microseconds.wav
 ├── transcripts/YYYY-MM-DD.md
 ├── summaries/YYYY-MM-DD.md
+├── history/index.html                     # rebuildable offline reader; date pages alongside
 ├── placement-tests/YYYYMMDD-HHMMSS/
 ├── speaker-profiles/speaker-<hash>.json   # local voice features; no enrollment audio
 ├── control.json                           # exists only while paused
@@ -38,6 +39,7 @@ FamilyRecorder splits data into two kinds: **Markdown for humans** and a **query
 | `audio/` | 16 kHz mono PCM16 WAVs, foldered by date | ❌ Never |
 | `transcripts/` | Daily Markdown transcripts with time / speaker / direction headings | ⚠️ Text goes to the summary once a day |
 | `summaries/` | Daily Markdown summaries | ❌ Never (this is output, not input) |
+| `history/` | [Offline reading copies](history-reader.en.md); unaffected by audio retention, included in complete uninstall | ❌ Never |
 | `placement-tests/` | Placement-test recordings and `report.md` | ❌ Never |
 | `speaker-profiles/` | Mode `0600` JSON feature vectors, **not playable** | ❌ Never |
 | `control.json` | Pause state and expiry | ❌ Never |
