@@ -22,9 +22,10 @@ with Storage(StorageConfig(data_dir=root)) as storage:
         dict(title=title, starts_at="2026-10-01T09:00:00+08:00",
              ends_at="2026-10-01T10:00:00+08:00", all_day=False,
              member_name="家人甲", notes="虛構的行事曆備註")
-        for title in ("牙齒檢查", "尚未決定的出遊")
+        for title in ("牙齒檢查", "閱讀活動", "樂器課", "尚未決定的出遊")
     ])
-    storage.mark_calendar_candidate(storage.pending_calendar_candidates()[0].id, "created")
+    for candidate in storage.pending_calendar_candidates()[:3]:
+        storage.mark_calendar_candidate(candidate.id, "created")
 build_history(root)`,
   data], {cwd: root, env: {...process.env, PYTHONPATH: path.join(root, "src")}});
 after(() => fs.rmSync(data, {recursive: true, force: true}));
@@ -89,7 +90,9 @@ test("brief and calendar have separate views, search and a created-only date fil
   assert.equal(doc.querySelectorAll(".day-card:not([hidden])").length, 1);
   const card = doc.querySelector(".day-card:not([hidden])");
   assert.match(card.querySelector(".card-brief").textContent, /今天確認接送安排/);
-  assert.match(card.querySelector(".card-calendar").textContent, /已加入行事曆 · 1 筆/);
+  assert.match(card.querySelector(".card-calendar").textContent, /已加入行事曆 · 3 筆/);
+  assert.equal(card.querySelectorAll(".calendar-preview li").length, 3);
+  assert.match(card.querySelector(".calendar-preview li:last-child").textContent, /樂器課/);
   assert.doesNotMatch(card.querySelector(".card-calendar").textContent, /尚未決定/);
   change(dom, "#search", "虛構的行事曆備註");
   assert.equal(doc.querySelectorAll(".day-card:not([hidden])").length, 1);
@@ -101,7 +104,7 @@ test("brief and calendar have separate views, search and a created-only date fil
   const page = calendar.window.document;
   assert.equal(page.querySelector("#calendar").hidden, false);
   assert.equal(page.querySelector("#brief").hidden, true);
-  assert.equal(page.querySelectorAll('#calendar [data-status="created"]').length, 1);
+  assert.equal(page.querySelectorAll('#calendar [data-status="created"]').length, 3);
   assert.equal(page.querySelectorAll('#calendar [data-status="pending"]').length, 1);
   assert.equal(page.querySelector(".calendar-other").open, false);
   change(calendar, "#find", "牙齒檢查");

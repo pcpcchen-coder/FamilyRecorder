@@ -354,7 +354,7 @@ def build_history(data_dir: Path) -> Path:
             )
             calendar_preview = "".join(
                 f"<li>{html.escape(event.title)}<small>{html.escape(_event_time(event))}</small></li>"
-                for event in created[:2]
+                for event in created
             )
             calendar_preview = (
                 f'<ul class="calendar-preview">{calendar_preview}</ul>' if calendar_preview else ""

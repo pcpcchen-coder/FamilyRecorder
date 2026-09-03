@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -120,6 +121,33 @@ def test_calendar_panels_status_search_future_dates_and_no_private_ids(tmp_path)
         assert "<img" not in text
     assert "牙齒檢查" in index.read_text()
     assert "尚無獨立的 200 字摘要" in page
+
+
+@pytest.mark.parametrize("count", [3, 5])
+def test_homepage_lists_every_created_event_without_truncation(tmp_path, count):
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        storage.replace_pending_calendar_candidates(
+            date(2026, 9, 2),
+            [
+                {
+                    "title": f"完整事件 {index}",
+                    "starts_at": "2026-10-01T09:00:00+08:00",
+                    "ends_at": "2026-10-01T10:00:00+08:00",
+                    "all_day": False,
+                }
+                for index in range(count + 1)
+            ],
+        )
+        for candidate in storage.pending_calendar_candidates()[:count]:
+            storage.mark_calendar_candidate(candidate.id, "created")
+    source = build_history(tmp_path).read_text()
+    events = re.search(r'<ul class="calendar-preview">(.*?)</ul>', source, re.S)[1]
+    assert events.count("<li>") == count
+    assert events.count("2026-10-01 09:00 UTC+08:00") == count
+    for index in range(count):
+        assert f"完整事件 {index}" in events
+    assert f"完整事件 {count}" not in events  # the pending event is still excluded
+    assert f'data-calendar="{count}"' in source
 
 
 @pytest.mark.parametrize("case", ["absent", "old", "corrupt", "symlink", "columns"])
