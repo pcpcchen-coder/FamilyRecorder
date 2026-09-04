@@ -108,6 +108,7 @@ See [daily summary and calendar](daily-summary.en.md#google-calendar-candidate-e
 
 ### Actions
 
+- **錄音與儲存** (Recording and storage) — shows the current WAV retention. “更改 WAV 保留天數…” accepts an integer from `0–36500`; `0` means WAVs are not retained long-term. A shorter policy is explicitly warned about, then the listener restarts and immediately removes expired WAVs. This may interrupt the current 30-second chunk, but never deletes transcripts, summaries, SQLite, speaker, or direction data.
 - **每日摘要** (Daily summary) — shows the current schedule. “更改每日摘要時間…” opens a time picker and atomically saves/reloads the user LaunchAgent without interrupting recording. The schedule still summarizes the previous day.
 - **立即整理今天** (Summarize today now) — inside the Daily summary submenu, passes today's date explicitly rather than the scheduled previous day.
 - **Restart the recording service**

@@ -83,6 +83,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     summary_schedule.add_argument("--hour", type=int, required=True)
     summary_schedule.add_argument("--minute", type=int, required=True)
+    audio_retention = commands.add_parser(
+        "set-audio-retention", help="Set the number of days raw WAV audio is kept locally"
+    )
+    audio_retention.add_argument("--days", type=int, required=True)
     summary_prompt = commands.add_parser(
         "set-summary-prompt", help="Set the editable instructions used for ChatGPT summaries"
     )
@@ -428,6 +432,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "summary_hour": config.summary.hour,
         "summary_minute": config.summary.minute,
         "summary_schedule_installed": summary_agent_is_installed(),
+        "audio_retention_days": config.storage.keep_audio_days,
         "common_terms": list(config.whisper.common_terms),
         "hallucination_filter": asdict(config.hallucination_filter),
         "hallucination_filter_preset": next(
@@ -534,6 +539,17 @@ def main(argv: list[str] | None = None) -> int:
                     f"每日摘要時間已儲存為 {result.time_label}；目前未安裝每日摘要排程，"
                     "下次安裝時會套用"
                 )
+            return 0
+        if args.command == "set-audio-retention":
+            updated_storage = replace(config.storage, keep_audio_days=args.days)
+            validate_config(replace(config, storage=updated_storage))
+            update_yaml_value(
+                args.config.expanduser().resolve(), "storage", "keep_audio_days", args.days
+            )
+            if args.days == 0:
+                print("WAV 保留天數已設為 0；錄音服務重啟後會清理既有 WAV")
+            else:
+                print(f"WAV 保留天數已設為 {args.days} 天；錄音服務重啟後立即套用")
             return 0
         if args.command in {"set-summary-prompt", "reset-summary-prompt"}:
             prompt = (

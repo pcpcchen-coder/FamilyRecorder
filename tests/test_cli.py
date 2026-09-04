@@ -122,3 +122,23 @@ def test_cli_sets_summary_schedule_and_reports_reload(tmp_path, monkeypatch, cap
     output = capsys.readouterr().out
     assert "08:35" in output
     assert "重新載入" in output
+
+
+def test_cli_sets_audio_retention_days(tmp_path, capsys) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("storage:\n  keep_audio_days: 7\n", encoding="utf-8")
+
+    assert cli.main(["--config", str(config_path), "set-audio-retention", "--days", "14"]) == 0
+
+    assert load_config(config_path).storage.keep_audio_days == 14
+    assert "14 天" in capsys.readouterr().out
+
+
+def test_cli_rejects_negative_audio_retention_without_changing_config(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    original = "storage:\n  keep_audio_days: 7\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    assert cli.main(["--config", str(config_path), "set-audio-retention", "--days", "-1"]) == 1
+
+    assert config_path.read_text(encoding="utf-8") == original

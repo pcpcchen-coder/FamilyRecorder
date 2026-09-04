@@ -156,6 +156,8 @@ family-recorder --config "$CONFIG" cleanup
 
 Retention affects `audio/` only. Transcripts, summaries, SQLite telemetry, and audit rows are untouched.
 
+You can also use **錄音與儲存 → 更改 WAV 保留天數…** in the menu bar. Saving restarts the listener, so the new cutoff applies immediately and expired WAVs are removed; at most the current 30-second chunk may be interrupted.
+
 ---
 
 ## `speakers`

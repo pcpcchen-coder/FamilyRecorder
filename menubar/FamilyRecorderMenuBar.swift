@@ -201,6 +201,7 @@ struct RecorderStatus: Decodable {
     let summaryHour: Int
     let summaryMinute: Int
     let summaryScheduleInstalled: Bool
+    let audioRetentionDays: Int
     let commonTerms: [String]
     let hallucinationFilter: HallucinationFilterSettings
     let hallucinationFilterPreset: String
@@ -242,6 +243,7 @@ struct RecorderStatus: Decodable {
         case summaryHour = "summary_hour"
         case summaryMinute = "summary_minute"
         case summaryScheduleInstalled = "summary_schedule_installed"
+        case audioRetentionDays = "audio_retention_days"
         case commonTerms = "common_terms"
         case hallucinationFilter = "hallucination_filter"
         case hallucinationFilterPreset = "hallucination_filter_preset"
@@ -743,6 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(directionItem)
 
         menu.addItem(buildCalendarMenu(status))
+        menu.addItem(buildStorageMenu(status))
         menu.addItem(buildSummaryScheduleMenu(status))
 
         menu.addItem(.separator())
@@ -784,6 +787,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         summaryMenu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
         summaryItem.submenu = summaryMenu
         return summaryItem
+    }
+
+    private func buildStorageMenu(_ status: RecorderStatus) -> NSMenuItem {
+        let storageItem = item("錄音與儲存")
+        let storageMenu = NSMenu()
+        let retention = status.audioRetentionDays == 0
+            ? "WAV：0 天（定期清理）"
+            : "WAV：保留 \(status.audioRetentionDays) 天"
+        storageMenu.addItem(item(retention, enabled: false))
+        storageMenu.addItem(
+            item("更改 WAV 保留天數…", action: #selector(changeAudioRetention))
+        )
+        storageMenu.addItem(.separator())
+        storageMenu.addItem(
+            item("只影響本機 WAV；逐字稿、摘要與分析資料不會刪除", enabled: false)
+        )
+        storageItem.submenu = storageMenu
+        return storageItem
     }
 
     private func buildHallucinationFilterMenu(_ status: RecorderStatus) -> NSMenuItem {
@@ -1192,6 +1213,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ["set-summary-schedule", "--hour", String(hour), "--minute", String(minute)],
             successTitle: "每日摘要時間已更新"
         )
+    }
+
+    @objc private func changeAudioRetention() {
+        guard let status = currentStatus else { return }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        field.stringValue = String(status.audioRetentionDays)
+        field.placeholderString = "0–36500"
+
+        let daysLabel = NSTextField(labelWithString: "天")
+        let row = NSStackView(views: [field, daysLabel])
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.alignment = .centerY
+
+        let alert = NSAlert()
+        alert.messageText = "更改 WAV 保留天數"
+        alert.informativeText =
+            "0 代表不長期保留 WAV。縮短天數後，超期音訊會在錄音服務重啟時立即清理且無法復原；逐字稿、摘要、SQLite、人別與方向資料不受影響。"
+        alert.accessoryView = row
+        alert.addButton(withTitle: "儲存並套用")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let days = Int(value), (0...36_500).contains(days) else {
+            showAlert(title: "保留天數無效", message: "請輸入 0 到 36500 之間的整數。")
+            return
+        }
+
+        runRecorderAsync(["set-audio-retention", "--days", String(days)]) {
+            [weak self] commandStatus, output in
+            guard let self else { return }
+            guard commandStatus == 0 else {
+                self.refreshStatus(rebuildMenu: true)
+                self.showAlert(title: "WAV 保留設定失敗", message: output)
+                return
+            }
+            let restart = self.restartListener()
+            self.refreshStatus(rebuildMenu: true)
+            if restart.0 == 0 {
+                self.showAlert(title: "WAV 保留天數已更新", message: output)
+            } else {
+                self.showAlert(
+                    title: "設定已儲存，但錄音服務重啟失敗",
+                    message: restart.1.isEmpty ? output : "\(output)\n\(restart.1)"
+                )
+            }
+        }
     }
 
     private func calendarDisplayName(_ calendar: EKCalendar) -> String {

@@ -64,6 +64,9 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert '"更改每日摘要時間…"' in source
     assert '"set-summary-schedule"' in source
     assert "picker.datePickerElements = .hourMinute" in source
+    assert '"更改 WAV 保留天數…"' in source
+    assert '"set-audio-retention"' in source
+    assert "let restart = self.restartListener()" in source
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:

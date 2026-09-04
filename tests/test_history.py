@@ -258,3 +258,4 @@ def test_menu_status_exposes_stable_history_path(tmp_path: Path, monkeypatch):
     assert result["summary_hour"] == 0
     assert result["summary_minute"] == 10
     assert isinstance(result["summary_schedule_installed"], bool)
+    assert result["audio_retention_days"] == 7

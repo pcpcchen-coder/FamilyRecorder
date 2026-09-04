@@ -224,11 +224,13 @@ select id, title, starts_at, member_name from calendar_candidates where status='
 | Command | Description |
 |---|---|
 | `placement-test --positions A B C` | Compare several microphone positions |
+| `set-audio-retention --days N` | Save local WAV retention; applies after the listener restarts |
 | `cleanup` | Apply the configured raw-audio retention now |
 
 ```bash
 "$FR" --config "$CONFIG" placement-test --positions "coffee-table" "shelf" "next-to-mac"
 "$FR" --config "$CONFIG" placement-test --positions A B --seconds 10 --sentences-file ./s.txt
+"$FR" --config "$CONFIG" set-audio-retention --days 14
 "$FR" --config "$CONFIG" cleanup
 ```
 

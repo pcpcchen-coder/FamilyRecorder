@@ -156,7 +156,7 @@ Solo thinking-out-loud memos, daily-conversation summaries for a relative living
 </td><td width="50%" valign="top">
 
 **🖥️ Native macOS experience**
-- Menu-bar item: status, timed pause, open folders, switch models, summarize now
+- Menu-bar item: status, timed pause, open folders, switch models, configure WAV retention and daily-summary time, summarize now
 - Three per-user LaunchAgents — no root daemons
 - Google Calendar candidates: confirm one by one, or opt in once for automatic creation
 - **One-click uninstall**: remove the program only, or move data to the Trash as well

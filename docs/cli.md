@@ -224,11 +224,13 @@ select id, title, starts_at, member_name from calendar_candidates where status='
 | 指令 | 說明 |
 |---|---|
 | `placement-test --positions A B C` | 比較多個麥克風位置 |
+| `set-audio-retention --days N` | 儲存本機 WAV 保留天數；listener 重啟後套用 |
 | `cleanup` | 立即套用設定的原始音訊 retention |
 
 ```bash
 "$FR" --config "$CONFIG" placement-test --positions "茶几中央" "櫃子上" "Mac旁"
 "$FR" --config "$CONFIG" placement-test --positions A B --seconds 10 --sentences-file ./s.txt
+"$FR" --config "$CONFIG" set-audio-retention --days 14
 "$FR" --config "$CONFIG" cleanup
 ```
 
