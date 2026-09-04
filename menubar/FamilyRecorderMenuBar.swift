@@ -197,6 +197,10 @@ struct RecorderStatus: Decodable {
     let downloadableWhisperModels: [DownloadableWhisperModel]
     let summaryModel: String
     let summaryPrompt: String
+    let summaryEnabled: Bool
+    let summaryHour: Int
+    let summaryMinute: Int
+    let summaryScheduleInstalled: Bool
     let commonTerms: [String]
     let hallucinationFilter: HallucinationFilterSettings
     let hallucinationFilterPreset: String
@@ -234,6 +238,10 @@ struct RecorderStatus: Decodable {
         case downloadableWhisperModels = "downloadable_whisper_models"
         case summaryModel = "summary_model"
         case summaryPrompt = "summary_prompt"
+        case summaryEnabled = "summary_enabled"
+        case summaryHour = "summary_hour"
+        case summaryMinute = "summary_minute"
+        case summaryScheduleInstalled = "summary_schedule_installed"
         case commonTerms = "common_terms"
         case hallucinationFilter = "hallucination_filter"
         case hallucinationFilterPreset = "hallucination_filter_preset"
@@ -735,9 +743,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(directionItem)
 
         menu.addItem(buildCalendarMenu(status))
+        menu.addItem(buildSummaryScheduleMenu(status))
 
         menu.addItem(.separator())
-        menu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
         menu.addItem(item("重新啟動錄音服務", action: #selector(restartListenerFromMenu)))
         menu.addItem(item("檢查系統狀態…", action: #selector(runDoctor)))
         menu.addItem(item("重新讀取狀態", action: #selector(refreshFromMenu)))
@@ -753,6 +761,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "strict": return "嚴格"
         default: return "自訂"
         }
+    }
+
+    private func summaryTimeLabel(_ status: RecorderStatus) -> String {
+        String(format: "%02d:%02d", status.summaryHour, status.summaryMinute)
+    }
+
+    private func buildSummaryScheduleMenu(_ status: RecorderStatus) -> NSMenuItem {
+        let summaryItem = item("每日摘要")
+        let summaryMenu = NSMenu()
+        let state = status.summaryEnabled ? "每天 \(summaryTimeLabel(status)) · 整理前一天" : "目前已停用"
+        summaryMenu.addItem(item(state, enabled: false))
+        summaryMenu.addItem(
+            item("更改每日摘要時間…", action: #selector(changeSummarySchedule))
+        )
+        if !status.summaryScheduleInstalled {
+            summaryMenu.addItem(
+                item("排程尚未安裝；時間會先儲存供下次安裝使用", enabled: false)
+            )
+        }
+        summaryMenu.addItem(.separator())
+        summaryMenu.addItem(item("立即整理今天", action: #selector(summarizeToday)))
+        summaryItem.submenu = summaryMenu
+        return summaryItem
     }
 
     private func buildHallucinationFilterMenu(_ status: RecorderStatus) -> NSMenuItem {
@@ -1120,6 +1151,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         runSimpleAction(["reset-summary-prompt"], successTitle: "已恢復內建摘要 Prompt")
+    }
+
+    @objc private func changeSummarySchedule() {
+        guard let status = currentStatus else { return }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let picker = NSDatePicker(frame: NSRect(x: 0, y: 0, width: 180, height: 28))
+        picker.datePickerStyle = .textFieldAndStepper
+        picker.datePickerElements = .hourMinute
+        picker.locale = Locale(identifier: "zh_TW")
+        picker.timeZone = .current
+        picker.dateValue = calendar.date(
+            from: DateComponents(
+                calendar: calendar,
+                timeZone: .current,
+                year: 2001,
+                month: 1,
+                day: 1,
+                hour: status.summaryHour,
+                minute: status.summaryMinute
+            )
+        ) ?? Date()
+
+        let alert = NSAlert()
+        alert.messageText = "更改每日摘要時間"
+        alert.informativeText =
+            "FamilyRecorder 會在每天選定的時間整理前一天紀錄。儲存後會立即更新排程，不中斷錄音。"
+        alert.accessoryView = picker
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let selected = calendar.dateComponents([.hour, .minute], from: picker.dateValue)
+        guard let hour = selected.hour, let minute = selected.minute else {
+            showAlert(title: "摘要時間無效", message: "請選擇 00:00 到 23:59 之間的時間。")
+            return
+        }
+        runSimpleAction(
+            ["set-summary-schedule", "--hour", String(hour), "--minute", String(minute)],
+            successTitle: "每日摘要時間已更新"
+        )
     }
 
     private func calendarDisplayName(_ calendar: EKCalendar) -> String {

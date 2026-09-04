@@ -218,13 +218,13 @@ FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 m
 | `model` | `""` | 空字串代表沿用 ChatGPT 帳號目前可用的 Codex 預設模型。填值才固定模型 |
 | `codex_binary_path` | `"codex"` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
-| `hour` / `minute` | `0` / `10` | LaunchAgent 每日執行時間。**修改後要重跑 `install_daily_summary.sh`** |
+| `hour` / `minute` | `0` / `10` | LaunchAgent 每日執行時間。從選單列「每日摘要 → 更改每日摘要時間…」可直接修改並重新載入排程 |
 | `max_input_chars` | `300000` | 超過時切成多段摘要，再做一次最終去重整併 |
 | `prompt` | 內建繁中格式 | 可自訂摘要重點。**安全規則、時間／人別／方向契約仍由程式強制附加** |
 
 > **重要：** 排程執行整理的是**昨天**。想整理今天，請用選單列的「立即整理今天」，或手動執行 `summary --date $(date +%F)`。
 
-`summary.prompt` 可從選單列「更換模型 → ChatGPT 摘要」以多行編輯器修改，或一鍵恢復內建格式。變更只套用到之後產生或重新執行的摘要。
+`summary.prompt` 可從選單列「更換模型 → ChatGPT 摘要」以多行編輯器修改，或一鍵恢復內建格式。變更只套用到之後產生或重新執行的摘要。摘要時間可從「每日摘要 → 更改每日摘要時間…」選擇；儲存會同時更新 YAML 與使用者層級 LaunchAgent，不中斷錄音。如果排程尚未安裝，時間會先存入 YAML，供下次安裝使用。
 
 ---
 
@@ -245,7 +245,7 @@ FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 m
 |---|---|
 | `audio.*`、`vad.*`、`whisper.*`、`hallucination_filter.*`、`speakers.*`、`direction.*` | **重啟 listener**。從選單列「重新啟動錄音服務」，或 `launchctl kickstart -k "gui/$UID/com.familyrecorder.listener"` |
 | `summary.model`、`summary.prompt` | 不用重啟。每次摘要執行時重新讀取 |
-| `summary.hour` / `summary.minute` | **重跑 `./scripts/install_daily_summary.sh`**，plist 才會更新 |
+| `summary.hour` / `summary.minute` | 從選單列修改會立即重新載入排程；手動改 YAML 才需要重跑 `./scripts/install_daily_summary.sh` |
 | `storage.keep_audio_days` | 下次 retention 執行時生效，或立刻 `cleanup` |
 | `calendar.*` | 不用重啟。選單列程式會讀取最新設定 |
 

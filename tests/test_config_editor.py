@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from family_recorder.config_editor import update_yaml_scalar, update_yaml_value
+from family_recorder.config_editor import update_yaml_scalar, update_yaml_value, update_yaml_values
 
 
 def test_update_yaml_scalar_preserves_comments_and_other_settings(tmp_path: Path) -> None:
@@ -54,3 +54,25 @@ def test_update_yaml_value_replaces_block_scalar_without_leaving_old_lines(tmp_p
     assert "舊的第一行" not in updated
     assert "hour: 0" in updated
     assert 'prompt: "新的第一行\\n新的第二行"' in updated
+
+
+def test_update_yaml_values_replaces_related_values_together(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# keep\nsummary:\n  hour: 0 # old\n  prompt: |\n    keep this\n",
+        encoding="utf-8",
+    )
+    replacements = []
+    replace = __import__("os").replace
+
+    def counted_replace(source, target):
+        replacements.append((source, target))
+        replace(source, target)
+
+    monkeypatch.setattr("family_recorder.config_editor.os.replace", counted_replace)
+    update_yaml_values(path, "summary", {"hour": 8, "minute": 35})
+
+    assert len(replacements) == 1
+    assert path.read_text() == (
+        "# keep\nsummary:\n  hour: 8\n  prompt: |\n    keep this\n  minute: 35\n"
+    )

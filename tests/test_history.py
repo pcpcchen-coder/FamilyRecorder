@@ -254,3 +254,7 @@ def test_menu_status_exposes_stable_history_path(tmp_path: Path, monkeypatch):
     config = AppConfig(storage=StorageConfig(data_dir=tmp_path))
     result = cli._menu_status(config, tmp_path / "config.yaml")
     assert result["history_index"] == str(tmp_path / "history" / "index.html")
+    assert result["summary_enabled"] is True
+    assert result["summary_hour"] == 0
+    assert result["summary_minute"] == 10
+    assert isinstance(result["summary_schedule_installed"], bool)

@@ -61,6 +61,9 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert 'runRecorderAsync(["build-history"])' in source
     assert '"閱讀歷史紀錄…"' in source
     assert "activateFileViewerSelecting([url])" in source
+    assert '"更改每日摘要時間…"' in source
+    assert '"set-summary-schedule"' in source
+    assert "picker.datePickerElements = .hourMinute" in source
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:

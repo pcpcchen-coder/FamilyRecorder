@@ -2,6 +2,7 @@ from family_recorder import cli
 from family_recorder.config import AppConfig, AudioConfig, load_config
 from family_recorder.devices import AudioDevice
 from family_recorder.direction import OutputRoute
+from family_recorder.schedule import ScheduleUpdateResult
 
 
 class FakeRoutingReader:
@@ -99,3 +100,25 @@ def test_cli_applies_named_hallucination_preset(tmp_path) -> None:
     assert result == 0
     assert config.hallucination_filter.min_avg_logprob == -0.60
     assert config.hallucination_filter.repeat_window_seconds == 600
+
+
+def test_cli_sets_summary_schedule_and_reports_reload(tmp_path, monkeypatch, capsys) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}\n")
+    calls = []
+
+    def update(path, hour, minute):
+        calls.append((path, hour, minute))
+        return ScheduleUpdateResult("08:35", True)
+
+    monkeypatch.setattr(cli, "update_summary_schedule", update)
+    assert (
+        cli.main(
+            ["--config", str(config_path), "set-summary-schedule", "--hour", "8", "--minute", "35"]
+        )
+        == 0
+    )
+    assert calls == [(config_path.resolve(), 8, 35)]
+    output = capsys.readouterr().out
+    assert "08:35" in output
+    assert "重新載入" in output

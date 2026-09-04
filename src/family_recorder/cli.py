@@ -29,6 +29,7 @@ from family_recorder.history import HistoryError, build_history, history_index_p
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
+from family_recorder.schedule import summary_agent_is_installed, update_summary_schedule
 from family_recorder.speakers import SpeakerProfileStore, create_profile
 from family_recorder.storage import Storage
 from family_recorder.summary import (
@@ -77,6 +78,11 @@ def _parser() -> argparse.ArgumentParser:
         "set-summary-model", help="Select a Codex summary model; empty uses the account default"
     )
     summary_model.add_argument("--model", required=True)
+    summary_schedule = commands.add_parser(
+        "set-summary-schedule", help="Set and immediately reload the daily summary time"
+    )
+    summary_schedule.add_argument("--hour", type=int, required=True)
+    summary_schedule.add_argument("--minute", type=int, required=True)
     summary_prompt = commands.add_parser(
         "set-summary-prompt", help="Set the editable instructions used for ChatGPT summaries"
     )
@@ -418,6 +424,10 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
         "summary_prompt": config.summary.prompt,
+        "summary_enabled": config.summary.enabled,
+        "summary_hour": config.summary.hour,
+        "summary_minute": config.summary.minute,
+        "summary_schedule_installed": summary_agent_is_installed(),
         "common_terms": list(config.whisper.common_terms),
         "hallucination_filter": asdict(config.hallucination_filter),
         "hallucination_filter_preset": next(
@@ -512,6 +522,18 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "summary", "model", args.model.strip()
             )
             print(f"Summary model: {args.model.strip() or 'ChatGPT account default'}")
+            return 0
+        if args.command == "set-summary-schedule":
+            result = update_summary_schedule(
+                args.config.expanduser().resolve(), args.hour, args.minute
+            )
+            if result.launch_agent_reloaded:
+                print(f"每日摘要時間已更新為 {result.time_label}；排程已重新載入（整理前一天）")
+            else:
+                print(
+                    f"每日摘要時間已儲存為 {result.time_label}；目前未安裝每日摘要排程，"
+                    "下次安裝時會套用"
+                )
             return 0
         if args.command in {"set-summary-prompt", "reset-summary-prompt"}:
             prompt = (

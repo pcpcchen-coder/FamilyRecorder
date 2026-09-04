@@ -109,7 +109,8 @@
 
 ### 操作
 
-- **立即整理今天** —— 明確傳入今天日期，不是排程的「昨天」。
+- **每日摘要** —— 顯示目前的排程時間；「更改每日摘要時間…」使用時間選擇器，儲存後立即更新並重新載入 LaunchAgent，不中斷錄音。排程仍整理前一天。
+- **立即整理今天** —— 位於「每日摘要」子選單，明確傳入今天日期，不是排程的「昨天」。
 - **重新啟動錄音服務**
 - **執行完整 `doctor` 檢查**
 - **解除安裝 FamilyRecorder…** —— 打開獨立的解除安裝器。
@@ -168,7 +169,7 @@ tail -f "$HOME/xvf3800-listener-data/logs/menubar.error.log"
 launchctl kickstart -k "gui/$UID/com.familyrecorder.listener"
 ```
 
-> ⚠️ 改了 `summary.hour` / `summary.minute` 之後，要**重跑 `./scripts/install_daily_summary.sh`**，plist 才會更新。
+> 從選單修改時間會同時更新 YAML 與 plist，並立即重新載入排程。只有手動編輯 `summary.hour` / `summary.minute` 時，才要重跑 `./scripts/install_daily_summary.sh`。
 
 launchd 環境變數中**沒有任何 API key 或 Codex token**；summary 工作只提供 `HOME`，讓官方 CLI 自己找到它保存的登入。
 

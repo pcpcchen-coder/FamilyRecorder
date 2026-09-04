@@ -14,6 +14,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Versions
 ## [Unreleased]
 
 ### Added
+- Configurable daily summary schedule / 可設定每日摘要時間：the menu-bar time picker atomically updates YAML and the existing user LaunchAgent, reloads it without interrupting recording, and restores both files if launchd rejects the change.
 - Offline history reader / 離線歷史紀錄閱讀頁：menu access, date/summary search, summary/transcript views, refresh after successful summaries, private generated files and complete-uninstall support. No server or additional AI request.
 - Independent short-summary and calendar views / 獨立短摘要與行事曆閱讀：extract existing 200-character briefs; show acknowledged calendar writes separately from pending/failed/dismissed entries, activity dates, member/notes, created-only filters, and refresh after calendar status changes. Read-only local calendar text; no AI calls or live cloud sync / 唯讀本機行事曆文字，不新增 AI 請求或即時雲端同步。
 - MIT `LICENSE` — the repository previously had no license, which legally prevented reuse and redistribution.
