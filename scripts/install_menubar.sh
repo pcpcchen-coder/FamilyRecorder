@@ -53,6 +53,38 @@ launchctl print "gui/$UID/com.familyrecorder.summary" >/dev/null 2>&1 && \
 launchctl bootout "gui/$UID" "$PLIST" 2>/dev/null || true
 launchctl bootout "gui/$UID" "$LISTENER_PLIST" 2>/dev/null || true
 launchctl bootout "gui/$UID" "$SUMMARY_PLIST" 2>/dev/null || true
+
+# `open FamilyRecorder.app` starts the foreground app outside launchd. Stop
+# that exact no-argument process as well, otherwise an upgrade can leave the
+# old executable resident and keep showing the previous menu until logout.
+# Service wrappers have additional arguments and are deliberately excluded.
+MENU_PIDS="$(
+  ps -axo pid=,command= | "$RUNTIME_ROOT/venv/bin/python" -c '
+import sys
+
+expected = sys.argv[1]
+for line in sys.stdin:
+    fields = line.strip().split(maxsplit=1)
+    if len(fields) == 2 and fields[1] == expected:
+        print(fields[0])
+' "$APP_EXECUTABLE"
+)"
+for menu_pid in $MENU_PIDS; do
+  case "$menu_pid" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  kill "$menu_pid" 2>/dev/null || true
+done
+for menu_pid in $MENU_PIDS; do
+  for _attempt in 1 2 3 4 5; do
+    kill -0 "$menu_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$menu_pid" 2>/dev/null; then
+    echo "The previous FamilyRecorder menu app did not exit." >&2
+    exit 1
+  fi
+done
 mkdir -p \
   "$(dirname "$APP_ROOT")" \
   "$APP_ROOT/Contents/MacOS" \
