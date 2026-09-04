@@ -1221,17 +1221,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         field.stringValue = String(status.audioRetentionDays)
         field.placeholderString = "0–36500"
 
-        let daysLabel = NSTextField(labelWithString: "天")
-        let row = NSStackView(views: [field, daysLabel])
-        row.orientation = .horizontal
-        row.spacing = 8
-        row.alignment = .centerY
-
         let alert = NSAlert()
         alert.messageText = "更改 WAV 保留天數"
         alert.informativeText =
             "0 代表不長期保留 WAV。縮短天數後，超期音訊會在錄音服務重啟時立即清理且無法復原；逐字稿、摘要、SQLite、人別與方向資料不受影響。"
-        alert.accessoryView = row
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
         alert.addButton(withTitle: "儲存並套用")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)

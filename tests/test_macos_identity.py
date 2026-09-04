@@ -66,6 +66,8 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert "picker.datePickerElements = .hourMinute" in source
     assert '"更改 WAV 保留天數…"' in source
     assert '"set-audio-retention"' in source
+    assert "alert.accessoryView = field" in source
+    assert "alert.window.initialFirstResponder = field" in source
     assert "let restart = self.restartListener()" in source
 
 
