@@ -64,7 +64,8 @@ def _updated_yaml_value(original: str, section: str, key: str, value: object) ->
     block_scalar = re.match(
         rf"^  {re.escape(key)}:\s*[|>][+-]?\s*(?:#.*)?(?:\r?\n)?$", lines[key_index]
     )
-    if block_scalar:
+    nested_collection = re.match(rf"^  {re.escape(key)}:\s*(?:#.*)?(?:\r?\n)?$", lines[key_index])
+    if block_scalar or nested_collection:
         block_end = key_index + 1
         while block_end < len(lines):
             candidate = lines[block_end]

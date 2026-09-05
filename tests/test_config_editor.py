@@ -56,6 +56,35 @@ def test_update_yaml_value_replaces_block_scalar_without_leaving_old_lines(tmp_p
     assert 'prompt: "新的第一行\\n新的第二行"' in updated
 
 
+def test_update_yaml_value_replaces_nested_mapping_without_leaving_old_keys(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """calendar:
+  enabled: true
+  weekly_review:
+    enabled: false
+    event_start: "08:00"
+    event_end: "09:00"
+  provider: google
+""",
+        encoding="utf-8",
+    )
+
+    update_yaml_value(
+        path,
+        "calendar",
+        "weekly_review",
+        {"enabled": True, "event_start": "11:00", "event_end": "12:00"},
+    )
+
+    updated = path.read_text(encoding="utf-8")
+    assert 'event_start: "08:00"' not in updated
+    assert '"event_start": "11:00"' in updated
+    assert "provider: google" in updated
+
+
 def test_update_yaml_values_replaces_related_values_together(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(
