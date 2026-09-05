@@ -152,6 +152,7 @@ Solo thinking-out-loud memos, daily-conversation summaries for a relative living
 - Event timeline, per-member highlights, decisions, tasks, key entities
 - A time-output contract is appended in code, so the model never invents timestamps
 - Long transcripts split only on complete segment boundaries, keeping speaker and time attached
+- Optional structured weekly review-sheet rule creates a fixed next-day candidate from a set source window
 
 </td><td width="50%" valign="top">
 

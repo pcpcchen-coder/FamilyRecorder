@@ -158,6 +158,47 @@ def test_load_config_accepts_google_calendar_member_mappings(tmp_path: Path) -> 
     assert config.calendar.member_default_calendar_ids["陳樂融"] == "school-id"
 
 
+def test_load_config_accepts_structured_weekly_review_rule(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """speakers:
+  members: [陳樂融]
+calendar:
+  weekly_review:
+    enabled: true
+    source_weekday: 4
+    source_start: "18:00"
+    source_end: "22:00"
+    event_day_offset: 1
+    event_start: "11:00"
+    event_end: "12:00"
+    title: 家教複習卷
+    member: 陳樂融
+    min_source_chars: 300
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.calendar.weekly_review.enabled is True
+    assert config.calendar.weekly_review.event_start == "11:00"
+    assert config.calendar.weekly_review.event_end == "12:00"
+    assert config.calendar.weekly_review.title == "家教複習卷"
+    assert config.calendar.weekly_review.member == "陳樂融"
+
+
+def test_load_config_rejects_invalid_weekly_review_time(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "calendar:\n  weekly_review: {event_start: '12:00', event_end: '11:00'}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="event_end"):
+        load_config(config_file)
+
+
 def test_load_config_rejects_invalid_direction_interval(tmp_path: Path) -> None:
     config_file = tmp_path / "config.yaml"
     config_file.write_text("direction:\n  sample_interval_seconds: 0.01\n", encoding="utf-8")

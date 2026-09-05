@@ -426,9 +426,10 @@ stateDiagram-v2
 ```
 
 - A date with no time becomes an all-day candidate; a date that cannot be resolved is rejected rather than guessed.
+- Optional `calendar.weekly_review` locally validates the weekday, source window, minimum content, and fixed event time. It never treats the free-form summary prompt as an external-action rule and merges same-day “複習券/複習卷” candidates.
 - The default path requires **per-event confirmation**. `auto_create` requires one explicit opt-in, after which the continuously running menu app notices `pending` rows and writes them through EventKit.
 - Every EventKit note carries the SQLite candidate ID, so an interrupted status update can be deduplicated before retry.
-- A failed or malformed extraction leaves **existing pending candidates untouched** and adds a visible warning to the Markdown summary.
+- A failed or malformed extraction leaves **existing pending candidates untouched**. An enabled weekly review candidate whose local conditions pass is still added, and the Markdown summary receives a visible warning.
 
 ---
 

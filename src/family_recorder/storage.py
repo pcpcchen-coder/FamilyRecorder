@@ -605,6 +605,36 @@ class Storage:
                 ],
             )
 
+    def add_pending_calendar_candidates(
+        self, target_date: date, candidates: list[dict[str, object]]
+    ) -> None:
+        """Add rule-derived candidates without disturbing existing pending rows."""
+        now = datetime.now().astimezone().isoformat()
+        with self.connection:
+            self.connection.executemany(
+                """
+                INSERT OR IGNORE INTO calendar_candidates (
+                    summary_date, title, starts_at, ends_at, all_day, notes,
+                    member_name, suggested_calendar_id, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                [
+                    (
+                        target_date.isoformat(),
+                        str(candidate["title"]),
+                        str(candidate["starts_at"]),
+                        str(candidate["ends_at"]),
+                        int(bool(candidate["all_day"])),
+                        str(candidate.get("notes", "")),
+                        str(candidate.get("member_name", "")),
+                        str(candidate.get("suggested_calendar_id", "")),
+                        now,
+                        now,
+                    )
+                    for candidate in candidates
+                ],
+            )
+
     def pending_calendar_candidates(self, limit: int = 50) -> list[CalendarCandidate]:
         rows = self.connection.execute(
             """

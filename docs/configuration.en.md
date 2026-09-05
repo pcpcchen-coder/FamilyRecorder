@@ -206,6 +206,19 @@ See [hardware and capture](hardware.en.md).
 | `calendar_names` | `{}` | Mapping from calendar ID to display name |
 | `member_calendar_ids` | `{}` | The calendars each member may use |
 | `member_default_calendar_ids` | `{}` | Per-member fallback when routing is uncertain. **Must be one of the calendars already assigned to that member** |
+| `weekly_review` | See below | Optional structured weekly review-sheet rule; disabled by default |
+
+`calendar.weekly_review` applies only when `enabled: true`. It selects the day's transcript
+using `source_weekday` (Monday is 0 and Friday is 4) plus `source_start`/`source_end`. Once
+the window reaches `min_source_chars`, the summary produces a tutoring summary and review
+sheet, then creates a fixed candidate `event_day_offset` days later from `event_start` to
+`event_end`. The example defaults use Friday 18:00-22:00 as the tutoring window and create
+“家教複習卷” on Saturday from 11:00-12:00. `member` may be empty; when set, it must name a
+configured household member so that member's default calendar can be used.
+
+These typed fields are deliberately separate from the freely editable `summary.prompt`.
+Only a validated structured rule can produce this fixed event, preventing ordinary summary
+prose from unexpectedly becoming an external action.
 
 FamilyRecorder **stores no Google password or OAuth token**. It writes through the Google account you already added under macOS Internet Accounts and synced in the Calendar app. See [daily summary and calendar](daily-summary.en.md#google-calendar-candidate-events).
 

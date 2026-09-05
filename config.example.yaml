@@ -106,6 +106,20 @@ calendar:
   calendar_names: {}
   member_calendar_ids: {}
   member_default_calendar_ids: {}
+  # Optional trusted rule. Unlike the editable summary prompt, these typed
+  # fields may create a candidate with fixed, validated date and time.
+  weekly_review:
+    enabled: false
+    # Monday=0 ... Friday=4 ... Sunday=6.
+    source_weekday: 4
+    source_start: "18:00"
+    source_end: "22:00"
+    event_day_offset: 1
+    event_start: "11:00"
+    event_end: "12:00"
+    title: "家教複習卷"
+    member: ""
+    min_source_chars: 200
 
 summary:
   enabled: true

@@ -195,6 +195,7 @@ Enrollment audio exists only in memory and is discarded once features are comput
 |---|---|
 | `set-calendar-enabled --enabled {true,false}` | Turn candidate extraction on or off |
 | `set-calendar-auto-create --enabled {true,false}` | Create events automatically after a one-time opt-in |
+| `set-weekly-review-rule --enabled {true,false} [...]` | Configure a fixed source window and next-day review-sheet event |
 | `set-calendar-default --calendar-id ID --calendar-name NAME` | Set the household default calendar |
 | `set-member-calendar --member M --calendar-id ID --enabled {true,false}` | Assign or unassign a calendar for one member |
 | `set-member-calendar-default --member M --calendar-id ID` | Choose that member's fallback calendar |
@@ -206,6 +207,10 @@ Enrollment audio exists only in memory and is discarded once features are comput
   --calendar-id "abc@group.calendar.google.com" --calendar-name "Family"
 "$FR" --config "$CONFIG" set-member-calendar \
   --member "family-2" --calendar-id "xyz@gmail.com" --calendar-name "Personal" --enabled true
+"$FR" --config "$CONFIG" set-weekly-review-rule --enabled true \
+  --source-weekday 4 --source-start 18:00 --source-end 22:00 \
+  --event-day-offset 1 --event-start 11:00 --event-end 12:00 \
+  --title "Tutoring review sheet" --member "family-2"
 "$FR" --config "$CONFIG" dismiss-calendar-event --id 42
 ```
 

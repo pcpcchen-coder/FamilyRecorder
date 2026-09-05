@@ -203,6 +203,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Automatically create extracted events after one-time user opt-in",
     )
     calendar_auto_create.add_argument("--enabled", choices=("true", "false"), required=True)
+    weekly_review = commands.add_parser(
+        "set-weekly-review-rule",
+        help="Create a fixed weekly review-sheet event from a transcript time window",
+    )
+    weekly_review.add_argument("--enabled", choices=("true", "false"), required=True)
+    weekly_review.add_argument("--source-weekday", type=int)
+    weekly_review.add_argument("--source-start")
+    weekly_review.add_argument("--source-end")
+    weekly_review.add_argument("--event-day-offset", type=int)
+    weekly_review.add_argument("--event-start")
+    weekly_review.add_argument("--event-end")
+    weekly_review.add_argument("--title")
+    weekly_review.add_argument("--member")
+    weekly_review.add_argument("--min-source-chars", type=int)
     calendar_default = commands.add_parser(
         "set-calendar-default", help="Select the default writable Google Calendar"
     )
@@ -451,6 +465,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "direction_front_angle_degrees": config.direction.front_angle_degrees,
         "calendar_enabled": config.calendar.enabled,
         "calendar_auto_create": config.calendar.auto_create,
+        "calendar_weekly_review": asdict(config.calendar.weekly_review),
         "calendar_provider": config.calendar.provider,
         "calendar_default_id": config.calendar.default_calendar_id,
         "calendar_default_name": config.calendar.default_calendar_name,
@@ -681,6 +696,47 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "calendar", "auto_create", enabled
             )
             print("摘要後將自動加入行事曆" if enabled else "已恢復逐筆確認模式")
+            return 0
+        if args.command == "set-weekly-review-rule":
+            enabled = args.enabled == "true"
+            if enabled and not config.calendar.enabled:
+                raise ValueError("請先開啟 Google Calendar 候選事件")
+            if enabled and not config.calendar.default_calendar_id:
+                raise ValueError("請先選擇預設 Google Calendar")
+            updates = {
+                name: getattr(args, name)
+                for name in (
+                    "source_weekday",
+                    "source_start",
+                    "source_end",
+                    "event_day_offset",
+                    "event_start",
+                    "event_end",
+                    "title",
+                    "member",
+                    "min_source_chars",
+                )
+                if getattr(args, name) is not None
+            }
+            updated_rule = replace(config.calendar.weekly_review, enabled=enabled, **updates)
+            updated_calendar = replace(config.calendar, weekly_review=updated_rule)
+            validate_config(replace(config, calendar=updated_calendar))
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "calendar", "weekly_review", asdict(updated_rule))
+            if "複習券" in config.summary.prompt:
+                update_yaml_value(
+                    config_path,
+                    "summary",
+                    "prompt",
+                    config.summary.prompt.replace("複習券", "複習卷"),
+                )
+            state = "已開啟" if enabled else "已關閉"
+            print(
+                f"每週複習卷規則{state}：來源星期 {updated_rule.source_weekday} "
+                f"{updated_rule.source_start}–{updated_rule.source_end}，事件於隔 "
+                f"{updated_rule.event_day_offset} 天 {updated_rule.event_start}–"
+                f"{updated_rule.event_end}"
+            )
             return 0
         if args.command == "set-calendar-default":
             calendar_id = args.calendar_id.strip()

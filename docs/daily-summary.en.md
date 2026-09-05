@@ -236,6 +236,18 @@ If the second, structured request fails, the summary file shows a **warning** an
 
 Re-running the same day refreshes only **unprocessed** candidates; it never recreates an event you already confirmed or skipped.
 
+### Weekly tutoring review-sheet rule
+
+`calendar.weekly_review` is a structured rule independent of the summary prompt. When enabled,
+FamilyRecorder asks for a tutoring summary and review sheet only if enough transcript content
+exists in the configured weekday and source window. It then adds a candidate using the validated
+title, day offset, and start/end times from configuration. The example defaults use tutoring
+content from Friday 18:00-22:00 to create “家教複習卷” on Saturday from 11:00-12:00.
+
+Because this rule can be evaluated locally, its fixed candidate is retained even if general
+candidate extraction fails; existing candidates are not cleared. The SQLite uniqueness key for
+date, title, time, and member prevents a summary rerun from creating a duplicate.
+
 ### What gets sent
 
 With this feature enabled, the plain-text instructions sent to ChatGPT additionally include:

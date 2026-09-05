@@ -8,6 +8,7 @@ from family_recorder.config import (
     SpeakerConfig,
     StorageConfig,
     SummaryConfig,
+    WeeklyReviewCalendarRuleConfig,
 )
 from family_recorder.storage import Storage
 from family_recorder.summary import (
@@ -218,6 +219,185 @@ def test_auto_create_mode_is_visible_in_generated_summary(tmp_path: Path) -> Non
     summary = result.read_text(encoding="utf-8")
     assert "選單列程式會自動加入" in summary
     assert "待確認" not in summary
+
+
+def test_weekly_review_rule_creates_saturday_review_sheet_at_fixed_time(
+    tmp_path: Path,
+) -> None:
+    target = date(2026, 9, 4)  # Friday
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    lesson = "分數加減與自然科考前重點。" * 30
+    (transcript_dir / f"{target}.md").write_text(
+        f"### 17:59:30–18:00:00\n略過。\n\n"
+        f"### 18:24:00–18:24:30 — 可能：陳樂融（88%）\n{lesson}\n\n"
+        "### 22:00:00–22:00:30\n也略過。\n",
+        encoding="utf-8",
+    )
+    summary_output = """## 事件時間軸
+- 約 18:24：進行考前家教複習。
+
+## 家教內容摘要與複習卷
+### 家教內容摘要
+- 分數加減與自然科重點。
+
+### 複習卷
+1. 完成分數加減三題。
+2. 說明自然科觀念。
+"""
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        speakers=SpeakerConfig(enabled=True, members=("陳樂融",)),
+        calendar=CalendarConfig(
+            enabled=True,
+            auto_create=True,
+            default_calendar_id="family-id",
+            member_calendar_ids={"陳樂融": ("school-id",)},
+            member_default_calendar_ids={"陳樂融": "school-id"},
+            weekly_review=WeeklyReviewCalendarRuleConfig(
+                enabled=True,
+                member="陳樂融",
+                min_source_chars=200,
+            ),
+        ),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    command_runner = FakeCommandRunner(stdout=[summary_output, '{"events":[]}'])
+
+    result = DailySummaryRunner(
+        config,
+        command_runner=command_runner,
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    summary_prompt = str(command_runner.calls[0][1]["input"])
+    calendar_prompt = str(command_runner.calls[1][1]["input"])
+    assert "固定使用「複習卷」" in summary_prompt
+    assert "2026-09-05" in summary_prompt
+    assert "11:00–12:00" in summary_prompt
+    assert "不要再從摘要中的複習卷／複習券段落產生另一個候選" in calendar_prompt
+    assert "已整理出 1 個 Google Calendar 事件" in result.read_text(encoding="utf-8")
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert len(pending) == 1
+    assert pending[0].title == "家教複習卷"
+    assert pending[0].starts_at.startswith("2026-09-05T11:00:00")
+    assert pending[0].ends_at.startswith("2026-09-05T12:00:00")
+    assert pending[0].member_name == "陳樂融"
+    assert pending[0].suggested_calendar_id == "school-id"
+    assert "完成分數加減三題" in pending[0].notes
+    assert "17:59" not in pending[0].notes
+
+
+def test_weekly_review_rule_replaces_ai_review_candidate_instead_of_duplicating(
+    tmp_path: Path,
+) -> None:
+    target = date(2026, 9, 4)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text(
+        "### 19:00:00–19:00:30\n" + ("家教內容" * 80), encoding="utf-8"
+    )
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        calendar=CalendarConfig(
+            enabled=True,
+            default_calendar_id="family-id",
+            weekly_review=WeeklyReviewCalendarRuleConfig(enabled=True),
+        ),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+    calendar_output = (
+        '{"events":[{"title":"考前複習券","start":"2026-09-05T08:00:00+08:00",'
+        '"end":"2026-09-05T09:00:00+08:00","all_day":false,"member":"",'
+        '"calendar_id":"","notes":"AI candidate"}]}'
+    )
+
+    DailySummaryRunner(
+        config,
+        command_runner=FakeCommandRunner(
+            stdout=["## 家教內容摘要與複習卷\n### 複習卷\n1. 第一題", calendar_output]
+        ),
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert [(item.title, item.starts_at[11:16]) for item in pending] == [("家教複習卷", "11:00")]
+
+
+def test_weekly_review_rule_survives_general_calendar_extraction_failure(
+    tmp_path: Path,
+) -> None:
+    target = date(2026, 9, 4)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    (transcript_dir / f"{target}.md").write_text(
+        "### 19:00:00–19:00:30\n" + ("家教內容" * 80), encoding="utf-8"
+    )
+    storage_config = StorageConfig(data_dir=tmp_path)
+    with Storage(storage_config) as storage:
+        storage.replace_pending_calendar_candidates(
+            target,
+            [
+                {
+                    "title": "既有事件",
+                    "starts_at": "2026-09-05T08:00:00+08:00",
+                    "ends_at": "2026-09-05T09:00:00+08:00",
+                    "all_day": False,
+                }
+            ],
+        )
+    config = AppConfig(
+        storage=storage_config,
+        calendar=CalendarConfig(
+            enabled=True,
+            default_calendar_id="family-id",
+            weekly_review=WeeklyReviewCalendarRuleConfig(enabled=True),
+        ),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+
+    result = DailySummaryRunner(
+        config,
+        command_runner=FakeCommandRunner(
+            stdout=["## 家教內容摘要與複習卷\n### 複習卷\n1. 第一題", "not json"]
+        ),
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    assert "已依每週規則保留 1 個家教複習卷事件" in result.read_text(encoding="utf-8")
+    with Storage(storage_config) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert [candidate.title for candidate in pending] == ["既有事件", "家教複習卷"]
+
+
+def test_weekly_review_rule_does_not_count_empty_segment_headings_as_content(
+    tmp_path: Path,
+) -> None:
+    target = date(2026, 9, 4)
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir(parents=True)
+    headings = "\n\n".join(f"### 19:{minute:02d}:00–19:{minute:02d}:30" for minute in range(10))
+    (transcript_dir / f"{target}.md").write_text(headings, encoding="utf-8")
+    config = AppConfig(
+        storage=StorageConfig(data_dir=tmp_path),
+        calendar=CalendarConfig(
+            enabled=True,
+            default_calendar_id="family-id",
+            weekly_review=WeeklyReviewCalendarRuleConfig(enabled=True),
+        ),
+        summary=SummaryConfig(max_input_chars=10_000),
+    )
+
+    DailySummaryRunner(
+        config,
+        command_runner=FakeCommandRunner(stdout=["沒有內容", '{"events":[]}']),
+        binary_resolver=lambda _configured: Path("/fake/codex"),
+    ).run(target)
+
+    with Storage(StorageConfig(data_dir=tmp_path)) as storage:
+        assert storage.pending_calendar_candidates() == []
 
 
 def test_calendar_extraction_failure_preserves_existing_pending_candidate(tmp_path: Path) -> None:

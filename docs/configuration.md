@@ -206,6 +206,17 @@ Retention 只影響 `audio/`。逐字稿、摘要、SQLite 遙測與稽核記錄
 | `calendar_names` | `{}` | 日曆 ID 到顯示名稱的對應 |
 | `member_calendar_ids` | `{}` | 每位成員可使用的多個日曆 |
 | `member_default_calendar_ids` | `{}` | 每位成員在無法精確分類時的回退日曆。**必須是該成員已綁定的日曆之一** |
+| `weekly_review` | 見下方 | 選用的結構化每週複習卷規則；預設關閉 |
+
+`calendar.weekly_review` 只有在 `enabled: true` 時生效。它以
+`source_weekday`（星期一為 0、星期五為 4）及 `source_start`／`source_end`
+選取當天逐字稿。內容達 `min_source_chars` 後，摘要會整理「家教內容摘要與複習卷」，
+並於 `event_day_offset` 天後的 `event_start`–`event_end` 建立固定候選。預設範例為
+星期五 18:00–22:00 的家教內容，星期六 11:00–12:00 建立「家教複習卷」。
+`member` 可留空；填值時必須是已設定的家庭成員，事件才會套用該成員的預設日曆。
+
+這些欄位刻意與可自由編輯的 `summary.prompt` 分開。只有經過型別與時間驗證的規則
+能產生固定事件，避免摘要中的一般文字意外變成外部操作。
 
 FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 macOS「Internet 帳號」並在「行事曆」App 中同步的 Google 帳號寫入。詳見 [每日摘要與行事曆](daily-summary.md#google-calendar-候選事件)。
 
