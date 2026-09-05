@@ -247,6 +247,8 @@ content from Friday 18:00-22:00 to create “家教複習卷” on Saturday from
 Because this rule can be evaluated locally, its fixed candidate is retained even if general
 candidate extraction fails; existing candidates are not cleared. The SQLite uniqueness key for
 date, title, time, and member prevents a summary rerun from creating a duplicate.
+To recover a date missed before an upgrade, run `apply-weekly-review-rule --date YYYY-MM-DD`.
+It reads only the existing local transcript and summary and does not call ChatGPT.
 
 ### What gets sent
 

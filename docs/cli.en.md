@@ -196,6 +196,7 @@ Enrollment audio exists only in memory and is discarded once features are comput
 | `set-calendar-enabled --enabled {true,false}` | Turn candidate extraction on or off |
 | `set-calendar-auto-create --enabled {true,false}` | Create events automatically after a one-time opt-in |
 | `set-weekly-review-rule --enabled {true,false} [...]` | Configure a fixed source window and next-day review-sheet event |
+| `apply-weekly-review-rule --date YYYY-MM-DD` | Apply the rule to existing local transcript and summary text without an AI call |
 | `set-calendar-default --calendar-id ID --calendar-name NAME` | Set the household default calendar |
 | `set-member-calendar --member M --calendar-id ID --enabled {true,false}` | Assign or unassign a calendar for one member |
 | `set-member-calendar-default --member M --calendar-id ID` | Choose that member's fallback calendar |
@@ -211,6 +212,7 @@ Enrollment audio exists only in memory and is discarded once features are comput
   --source-weekday 4 --source-start 18:00 --source-end 22:00 \
   --event-day-offset 1 --event-start 11:00 --event-end 12:00 \
   --title "Tutoring review sheet" --member "family-2"
+"$FR" --config "$CONFIG" apply-weekly-review-rule --date 2026-09-04
 "$FR" --config "$CONFIG" dismiss-calendar-event --id 42
 ```
 

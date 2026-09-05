@@ -37,6 +37,7 @@ from family_recorder.summary import (
     SummaryError,
     check_codex_login,
     resolve_codex_binary,
+    weekly_review_candidate,
 )
 
 DEFAULT_CONFIG = Path("~/.config/familyrecorder/config.yaml").expanduser()
@@ -217,6 +218,11 @@ def _parser() -> argparse.ArgumentParser:
     weekly_review.add_argument("--title")
     weekly_review.add_argument("--member")
     weekly_review.add_argument("--min-source-chars", type=int)
+    apply_weekly_review = commands.add_parser(
+        "apply-weekly-review-rule",
+        help="Create the configured review candidate from existing local text without an AI call",
+    )
+    apply_weekly_review.add_argument("--date", type=date.fromisoformat, required=True)
     calendar_default = commands.add_parser(
         "set-calendar-default", help="Select the default writable Google Calendar"
     )
@@ -736,6 +742,34 @@ def main(argv: list[str] | None = None) -> int:
                 f"{updated_rule.source_start}–{updated_rule.source_end}，事件於隔 "
                 f"{updated_rule.event_day_offset} 天 {updated_rule.event_start}–"
                 f"{updated_rule.event_end}"
+            )
+            return 0
+        if args.command == "apply-weekly-review-rule":
+            transcript_path = config.storage.data_dir / "transcripts" / f"{args.date}.md"
+            summary_path = config.storage.data_dir / "summaries" / f"{args.date}.md"
+            if not transcript_path.is_file() or not summary_path.is_file():
+                raise ValueError("指定日期必須同時有逐字稿與摘要")
+            candidate = weekly_review_candidate(
+                target_date=args.date,
+                transcript=transcript_path.read_text(encoding="utf-8"),
+                summary=summary_path.read_text(encoding="utf-8"),
+                rule=config.calendar.weekly_review,
+                default_calendar_id=config.calendar.default_calendar_id,
+                member_default_calendar_ids=config.calendar.member_default_calendar_ids,
+            )
+            if candidate is None:
+                raise ValueError("指定日期不符合已設定的每週複習卷規則或內容量不足")
+            with Storage(config.storage) as storage:
+                storage.add_pending_calendar_candidates(args.date, [candidate])
+            try:
+                build_history(config.storage.data_dir)
+            except (OSError, UnicodeError, HistoryError):
+                logging.getLogger(__name__).warning(
+                    "複習卷候選已保存，但閱讀頁更新失敗；稍後會自動重建。"
+                )
+            print(
+                f"已依本機文字保留 {candidate['title']}："
+                f"{str(candidate['starts_at'])[:16]}–{str(candidate['ends_at'])[11:16]}"
             )
             return 0
         if args.command == "set-calendar-default":

@@ -255,6 +255,8 @@ FamilyRecorder 預設支援 Google Calendar，但**不另存 Google 密碼或 OA
 
 一般候選擷取失敗時，這條本機可判定的固定規則仍可保留候選；既有候選不會被清除。
 相同日期、標題、時間與成員受 SQLite 唯一鍵保護，重跑摘要不會重複建立。
+若要補回升級前漏掉的日期，可執行 `apply-weekly-review-rule --date YYYY-MM-DD`；
+它只讀取既有本機逐字稿與摘要，不呼叫 ChatGPT。
 
 ### 送出的內容
 

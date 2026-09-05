@@ -196,6 +196,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 | `set-calendar-enabled --enabled {true,false}` | 開關候選事件擷取 |
 | `set-calendar-auto-create --enabled {true,false}` | 一次同意後自動建立事件 |
 | `set-weekly-review-rule --enabled {true,false} [...]` | 設定固定來源時段與隔日複習卷事件 |
+| `apply-weekly-review-rule --date YYYY-MM-DD` | 純本機套用規則到既有逐字稿與摘要，不呼叫 AI |
 | `set-calendar-default --calendar-id ID --calendar-name NAME` | 設定全家預設日曆 |
 | `set-member-calendar --member M --calendar-id ID --enabled {true,false}` | 為一位成員綁定／解除綁定日曆 |
 | `set-member-calendar-default --member M --calendar-id ID` | 指定該成員的回退日曆 |
@@ -211,6 +212,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
   --source-weekday 4 --source-start 18:00 --source-end 22:00 \
   --event-day-offset 1 --event-start 11:00 --event-end 12:00 \
   --title "家教複習卷" --member "家人二"
+"$FR" --config "$CONFIG" apply-weekly-review-rule --date 2026-09-04
 "$FR" --config "$CONFIG" dismiss-calendar-event --id 42
 ```
 

@@ -3,6 +3,7 @@ from family_recorder.config import AppConfig, AudioConfig, load_config
 from family_recorder.devices import AudioDevice
 from family_recorder.direction import OutputRoute
 from family_recorder.schedule import ScheduleUpdateResult
+from family_recorder.storage import Storage
 
 
 class FakeRoutingReader:
@@ -192,3 +193,44 @@ summary:
     assert config.calendar.weekly_review.member == "陳樂融"
     assert "複習卷" in config.summary.prompt
     assert "複習券" not in config.summary.prompt
+
+
+def test_cli_applies_weekly_review_rule_from_existing_text_without_ai(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""storage:
+  data_dir: {tmp_path}
+calendar:
+  enabled: true
+  default_calendar_id: family-id
+  weekly_review:
+    enabled: true
+    min_source_chars: 20
+""",
+        encoding="utf-8",
+    )
+    transcript_dir = tmp_path / "transcripts"
+    summary_dir = tmp_path / "summaries"
+    transcript_dir.mkdir()
+    summary_dir.mkdir()
+    (transcript_dir / "2026-09-04.md").write_text(
+        "### 19:00:00–19:00:30\n" + ("家教內容" * 10), encoding="utf-8"
+    )
+    (summary_dir / "2026-09-04.md").write_text(
+        "## 家教內容摘要與複習卷\n### 複習卷\n1. 第一題", encoding="utf-8"
+    )
+
+    result = cli.main(
+        [
+            "--config",
+            str(config_path),
+            "apply-weekly-review-rule",
+            "--date",
+            "2026-09-04",
+        ]
+    )
+
+    assert result == 0
+    with Storage(load_config(config_path).storage) as storage:
+        pending = storage.pending_calendar_candidates()
+    assert [(item.title, item.starts_at[11:16]) for item in pending] == [("家教複習卷", "11:00")]
