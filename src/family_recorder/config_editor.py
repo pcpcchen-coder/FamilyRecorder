@@ -14,6 +14,18 @@ class ConfigEditError(RuntimeError):
 def update_yaml_value(path: Path, section: str, key: str, value: object) -> None:
     """Update one two-space-indented YAML value while preserving all other text."""
     original = path.read_text(encoding="utf-8")
+    _atomic_replace(path, _updated_yaml_value(original, section, key, value))
+
+
+def update_yaml_values(path: Path, section: str, values: dict[str, object]) -> None:
+    """Update related YAML values together with one atomic file replacement."""
+    updated = path.read_text(encoding="utf-8")
+    for key, value in values.items():
+        updated = _updated_yaml_value(updated, section, key, value)
+    _atomic_replace(path, updated)
+
+
+def _updated_yaml_value(original: str, section: str, key: str, value: object) -> str:
     lines = original.splitlines(keepends=True)
     section_pattern = re.compile(rf"^{re.escape(section)}:\s*(?:#.*)?(?:\r?\n)?$")
     key_pattern = re.compile(rf"^  {re.escape(key)}:\s*.*(?:\r?\n)?$")
@@ -30,8 +42,7 @@ def update_yaml_value(path: Path, section: str, key: str, value: object) -> None
             f"{original}{separator}{newline if original else ''}{section}:{newline}"
             f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
         )
-        _atomic_replace(path, updated)
-        return
+        return updated
 
     end_index = len(lines)
     for index in range(section_index + 1, len(lines)):
@@ -46,15 +57,15 @@ def update_yaml_value(path: Path, section: str, key: str, value: object) -> None
     if key_index is None:
         newline = "\r\n" if "\r\n" in original else "\n"
         lines.insert(end_index, f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}")
-        _atomic_replace(path, "".join(lines))
-        return
+        return "".join(lines)
 
     newline = "\r\n" if lines[key_index].endswith("\r\n") else "\n"
     replacement = f"  {key}: {json.dumps(value, ensure_ascii=False)}{newline}"
     block_scalar = re.match(
         rf"^  {re.escape(key)}:\s*[|>][+-]?\s*(?:#.*)?(?:\r?\n)?$", lines[key_index]
     )
-    if block_scalar:
+    nested_collection = re.match(rf"^  {re.escape(key)}:\s*(?:#.*)?(?:\r?\n)?$", lines[key_index])
+    if block_scalar or nested_collection:
         block_end = key_index + 1
         while block_end < len(lines):
             candidate = lines[block_end]
@@ -64,7 +75,7 @@ def update_yaml_value(path: Path, section: str, key: str, value: object) -> None
         lines[key_index:block_end] = [replacement]
     else:
         lines[key_index] = replacement
-    _atomic_replace(path, "".join(lines))
+    return "".join(lines)
 
 
 def _atomic_replace(path: Path, updated: str) -> None:

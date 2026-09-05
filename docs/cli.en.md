@@ -82,6 +82,7 @@ Pause state is written to `data_dir/control.json`. The listener checks it once p
 |---|---|
 | `summary` | Summarize **yesterday** in the Mac's local date, same as the daily schedule |
 | `summary --date YYYY-MM-DD` | Summarize a specific date |
+| `set-summary-schedule --hour H --minute M` | Set the daily time; safely reload an installed schedule and roll back on failure |
 | `build-history` | Refresh offline `history/index.html` and date pages, printing the homepage path; no AI calls or source edits |
 
 ```bash
@@ -194,6 +195,8 @@ Enrollment audio exists only in memory and is discarded once features are comput
 |---|---|
 | `set-calendar-enabled --enabled {true,false}` | Turn candidate extraction on or off |
 | `set-calendar-auto-create --enabled {true,false}` | Create events automatically after a one-time opt-in |
+| `set-weekly-review-rule --enabled {true,false} [...]` | Configure a fixed source window and next-day review-sheet event |
+| `apply-weekly-review-rule --date YYYY-MM-DD` | Apply the rule to existing local transcript and summary text without an AI call |
 | `set-calendar-default --calendar-id ID --calendar-name NAME` | Set the household default calendar |
 | `set-member-calendar --member M --calendar-id ID --enabled {true,false}` | Assign or unassign a calendar for one member |
 | `set-member-calendar-default --member M --calendar-id ID` | Choose that member's fallback calendar |
@@ -205,6 +208,11 @@ Enrollment audio exists only in memory and is discarded once features are comput
   --calendar-id "abc@group.calendar.google.com" --calendar-name "Family"
 "$FR" --config "$CONFIG" set-member-calendar \
   --member "family-2" --calendar-id "xyz@gmail.com" --calendar-name "Personal" --enabled true
+"$FR" --config "$CONFIG" set-weekly-review-rule --enabled true \
+  --source-weekday 4 --source-start 18:00 --source-end 22:00 \
+  --event-day-offset 1 --event-start 11:00 --event-end 12:00 \
+  --title "Tutoring review sheet" --member "family-2"
+"$FR" --config "$CONFIG" apply-weekly-review-rule --date 2026-09-04
 "$FR" --config "$CONFIG" dismiss-calendar-event --id 42
 ```
 
@@ -223,11 +231,13 @@ select id, title, starts_at, member_name from calendar_candidates where status='
 | Command | Description |
 |---|---|
 | `placement-test --positions A B C` | Compare several microphone positions |
+| `set-audio-retention --days N` | Save local WAV retention; applies after the listener restarts |
 | `cleanup` | Apply the configured raw-audio retention now |
 
 ```bash
 "$FR" --config "$CONFIG" placement-test --positions "coffee-table" "shelf" "next-to-mac"
 "$FR" --config "$CONFIG" placement-test --positions A B --seconds 10 --sentences-file ./s.txt
+"$FR" --config "$CONFIG" set-audio-retention --days 14
 "$FR" --config "$CONFIG" cleanup
 ```
 

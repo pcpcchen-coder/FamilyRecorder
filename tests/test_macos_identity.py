@@ -46,6 +46,9 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert 'LEGACY_USER_APP_ROOT="$HOME/Applications/FamilyRecorder.app"' in installer
     assert 'open "$APP_ROOT"' in installer
     assert "tccutil reset Microphone com.familyrecorder.menubar" in installer
+    assert "fields[1] == expected" in installer
+    assert 'kill "$menu_pid"' in installer
+    assert "Service wrappers have additional arguments" in installer
 
     source = (ROOT / "menubar" / "FamilyRecorderMenuBar.swift").read_text(encoding="utf-8")
     assert 'appendingPathComponent("venv/bin/family-recorder")' in source
@@ -61,6 +64,14 @@ def test_app_bundle_uses_the_familyrecorder_identity() -> None:
     assert 'runRecorderAsync(["build-history"])' in source
     assert '"閱讀歷史紀錄…"' in source
     assert "activateFileViewerSelecting([url])" in source
+    assert '"更改每日摘要時間…"' in source
+    assert '"set-summary-schedule"' in source
+    assert "picker.datePickerElements = .hourMinute" in source
+    assert '"更改 WAV 保留天數…"' in source
+    assert '"set-audio-retention"' in source
+    assert "alert.accessoryView = field" in source
+    assert "alert.window.initialFirstResponder = field" in source
+    assert "let restart = self.restartListener()" in source
 
 
 def test_every_launch_agent_is_associated_with_the_same_app() -> None:

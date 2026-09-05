@@ -139,6 +139,7 @@ flowchart LR
     PLC["placement.py"]
     MDL["model_manager.py"]
     CED["config_editor.py"]
+    SCH["schedule.py"]
     CLI["cli.py<br/>single entry point"]
 
     CFG --> DEV & AUD & MET & TRN & DIR & SPK & HAL & STO & SUM & PLC & MDL
@@ -156,13 +157,14 @@ flowchart LR
     PLC --> CLI
     MDL --> CLI
     CED --> CLI
+    CED --> SCH --> CLI
 
     classDef base fill:#eceff1,stroke:#546e7a,color:#263238
     classDef mid fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef top fill:#fff3e0,stroke:#e65100,color:#3e2723
     class CFG,DEV,AUD,MET base
     class TRN,DIR,SPK,HAL,CTL,STO mid
-    class LIS,SUM,PLC,MDL,CED,CLI top
+    class LIS,SUM,PLC,MDL,CED,SCH,CLI top
 ```
 
 | Module | Lines | Responsibility |
@@ -181,8 +183,9 @@ flowchart LR
 | `summary.py` | 515 | Daily summary, time/speaker/direction contracts, calendar extraction |
 | `placement.py` | 197 | A/B/C placement test and CER report |
 | `model_manager.py` | 217 | Whisper model catalog, download, resume, GGML validation |
-| `config_editor.py` | 83 | Targeted YAML edits that preserve unrelated comments |
-| `cli.py` | 777 | Every subcommand; the menu bar app touches the system only through this layer |
+| `config_editor.py` | 93 | Targeted YAML edits that preserve unrelated comments |
+| `schedule.py` | 151 | Atomically change the daily summary time, reload its LaunchAgent, and roll back failures |
+| `cli.py` | 819 | Every subcommand; the menu bar app touches the system only through this layer |
 
 ---
 
@@ -423,9 +426,10 @@ stateDiagram-v2
 ```
 
 - A date with no time becomes an all-day candidate; a date that cannot be resolved is rejected rather than guessed.
+- Optional `calendar.weekly_review` locally validates the weekday, source window, minimum content, and fixed event time. It never treats the free-form summary prompt as an external-action rule and merges same-day “複習券/複習卷” candidates.
 - The default path requires **per-event confirmation**. `auto_create` requires one explicit opt-in, after which the continuously running menu app notices `pending` rows and writes them through EventKit.
 - Every EventKit note carries the SQLite candidate ID, so an interrupted status update can be deduplicated before retry.
-- A failed or malformed extraction leaves **existing pending candidates untouched** and adds a visible warning to the Markdown summary.
+- A failed or malformed extraction leaves **existing pending candidates untouched**. An enabled weekly review candidate whose local conditions pass is still added, and the Markdown summary receives a visible warning.
 
 ---
 

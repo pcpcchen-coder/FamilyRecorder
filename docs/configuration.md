@@ -156,6 +156,8 @@ family-recorder --config "$CONFIG" cleanup
 
 Retention 只影響 `audio/`。逐字稿、摘要、SQLite 遙測與稽核記錄不受影響。
 
+也可從選單列 **錄音與儲存 → 更改 WAV 保留天數…** 設定。儲存後會重啟 listener，因此新期限立即生效並清理超期 WAV；當下最多一個 30 秒片段可能不會保留。
+
 ---
 
 ## `speakers`
@@ -204,6 +206,17 @@ Retention 只影響 `audio/`。逐字稿、摘要、SQLite 遙測與稽核記錄
 | `calendar_names` | `{}` | 日曆 ID 到顯示名稱的對應 |
 | `member_calendar_ids` | `{}` | 每位成員可使用的多個日曆 |
 | `member_default_calendar_ids` | `{}` | 每位成員在無法精確分類時的回退日曆。**必須是該成員已綁定的日曆之一** |
+| `weekly_review` | 見下方 | 選用的結構化每週複習卷規則；預設關閉 |
+
+`calendar.weekly_review` 只有在 `enabled: true` 時生效。它以
+`source_weekday`（星期一為 0、星期五為 4）及 `source_start`／`source_end`
+選取當天逐字稿。內容達 `min_source_chars` 後，摘要會整理「家教內容摘要與複習卷」，
+並於 `event_day_offset` 天後的 `event_start`–`event_end` 建立固定候選。預設範例為
+星期五 18:00–22:00 的家教內容，星期六 11:00–12:00 建立「家教複習卷」。
+`member` 可留空；填值時必須是已設定的家庭成員，事件才會套用該成員的預設日曆。
+
+這些欄位刻意與可自由編輯的 `summary.prompt` 分開。只有經過型別與時間驗證的規則
+能產生固定事件，避免摘要中的一般文字意外變成外部操作。
 
 FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 macOS「Internet 帳號」並在「行事曆」App 中同步的 Google 帳號寫入。詳見 [每日摘要與行事曆](daily-summary.md#google-calendar-候選事件)。
 
@@ -218,13 +231,13 @@ FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 m
 | `model` | `""` | 空字串代表沿用 ChatGPT 帳號目前可用的 Codex 預設模型。填值才固定模型 |
 | `codex_binary_path` | `"codex"` | 會搜尋 PATH、ChatGPT.app 與常見 Homebrew 位置 |
 | `timeout_seconds` | `900` | 每次 Codex 摘要最長等待秒數 |
-| `hour` / `minute` | `0` / `10` | LaunchAgent 每日執行時間。**修改後要重跑 `install_daily_summary.sh`** |
+| `hour` / `minute` | `0` / `10` | LaunchAgent 每日執行時間。從選單列「每日摘要 → 更改每日摘要時間…」可直接修改並重新載入排程 |
 | `max_input_chars` | `300000` | 超過時切成多段摘要，再做一次最終去重整併 |
 | `prompt` | 內建繁中格式 | 可自訂摘要重點。**安全規則、時間／人別／方向契約仍由程式強制附加** |
 
 > **重要：** 排程執行整理的是**昨天**。想整理今天，請用選單列的「立即整理今天」，或手動執行 `summary --date $(date +%F)`。
 
-`summary.prompt` 可從選單列「更換模型 → ChatGPT 摘要」以多行編輯器修改，或一鍵恢復內建格式。變更只套用到之後產生或重新執行的摘要。
+`summary.prompt` 可從選單列「更換模型 → ChatGPT 摘要」以多行編輯器修改，或一鍵恢復內建格式。變更只套用到之後產生或重新執行的摘要。摘要時間可從「每日摘要 → 更改每日摘要時間…」選擇；儲存會同時更新 YAML 與使用者層級 LaunchAgent，不中斷錄音。如果排程尚未安裝，時間會先存入 YAML，供下次安裝使用。
 
 ---
 
@@ -245,7 +258,7 @@ FamilyRecorder **不另存 Google 密碼或 OAuth token**；它透過已加入 m
 |---|---|
 | `audio.*`、`vad.*`、`whisper.*`、`hallucination_filter.*`、`speakers.*`、`direction.*` | **重啟 listener**。從選單列「重新啟動錄音服務」，或 `launchctl kickstart -k "gui/$UID/com.familyrecorder.listener"` |
 | `summary.model`、`summary.prompt` | 不用重啟。每次摘要執行時重新讀取 |
-| `summary.hour` / `summary.minute` | **重跑 `./scripts/install_daily_summary.sh`**，plist 才會更新 |
+| `summary.hour` / `summary.minute` | 從選單列修改會立即重新載入排程；手動改 YAML 才需要重跑 `./scripts/install_daily_summary.sh` |
 | `storage.keep_audio_days` | 下次 retention 執行時生效，或立刻 `cleanup` |
 | `calendar.*` | 不用重啟。選單列程式會讀取最新設定 |
 

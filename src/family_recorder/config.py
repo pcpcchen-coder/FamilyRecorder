@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -137,6 +138,20 @@ class DirectionConfig:
 
 
 @dataclass(frozen=True)
+class WeeklyReviewCalendarRuleConfig:
+    enabled: bool = False
+    source_weekday: int = 4
+    source_start: str = "18:00"
+    source_end: str = "22:00"
+    event_day_offset: int = 1
+    event_start: str = "11:00"
+    event_end: str = "12:00"
+    title: str = "家教複習卷"
+    member: str = ""
+    min_source_chars: int = 200
+
+
+@dataclass(frozen=True)
 class CalendarConfig:
     enabled: bool = False
     auto_create: bool = False
@@ -146,6 +161,9 @@ class CalendarConfig:
     calendar_names: dict[str, str] = field(default_factory=dict)
     member_calendar_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
     member_default_calendar_ids: dict[str, str] = field(default_factory=dict)
+    weekly_review: WeeklyReviewCalendarRuleConfig = field(
+        default_factory=WeeklyReviewCalendarRuleConfig
+    )
 
 
 DEFAULT_SUMMARY_PROMPT = """\
@@ -287,6 +305,13 @@ def load_config(path: str | Path) -> AppConfig:
         calendar_values["member_default_calendar_ids"] = {
             str(member): str(calendar_id) for member, calendar_id in defaults.items()
         }
+    if "weekly_review" in calendar_values:
+        weekly_review = calendar_values["weekly_review"]
+        if not isinstance(weekly_review, dict):
+            raise ValueError("calendar.weekly_review must be a YAML mapping")
+        calendar_values["weekly_review"] = WeeklyReviewCalendarRuleConfig(
+            **_known_values(WeeklyReviewCalendarRuleConfig, weekly_review)
+        )
     calendar = CalendarConfig(**calendar_values)
 
     summary = SummaryConfig(**_known_values(SummaryConfig, raw.get("summary", {})))
@@ -418,6 +443,28 @@ def validate_config(config: AppConfig) -> None:
     for member, calendar_id in config.calendar.member_default_calendar_ids.items():
         if calendar_id not in config.calendar.member_calendar_ids.get(member, ()):
             raise ValueError("each member default calendar must also be assigned to that member")
+    review = config.calendar.weekly_review
+    if review.source_weekday not in range(7):
+        raise ValueError("calendar.weekly_review.source_weekday must be between 0 and 6")
+    if review.event_day_offset not in range(8):
+        raise ValueError("calendar.weekly_review.event_day_offset must be between 0 and 7")
+    try:
+        source_start = datetime.strptime(review.source_start, "%H:%M").time()
+        source_end = datetime.strptime(review.source_end, "%H:%M").time()
+        event_start = datetime.strptime(review.event_start, "%H:%M").time()
+        event_end = datetime.strptime(review.event_end, "%H:%M").time()
+    except ValueError as exc:
+        raise ValueError("calendar.weekly_review times must use HH:MM") from exc
+    if source_end <= source_start:
+        raise ValueError("calendar.weekly_review.source_end must be after source_start")
+    if event_end <= event_start:
+        raise ValueError("calendar.weekly_review.event_end must be after event_start")
+    if not review.title.strip() or len(review.title) > 160 or "\n" in review.title:
+        raise ValueError("calendar.weekly_review.title must be 1 to 160 characters")
+    if review.member and review.member not in config.speakers.members:
+        raise ValueError("calendar.weekly_review.member must be a configured household member")
+    if not 1 <= review.min_source_chars <= 100_000:
+        raise ValueError("calendar.weekly_review.min_source_chars must be between 1 and 100000")
     if not 0 <= config.summary.hour <= 23 or not 0 <= config.summary.minute <= 59:
         raise ValueError("summary.hour/minute is not a valid time")
     if config.summary.max_input_chars < 1_000:

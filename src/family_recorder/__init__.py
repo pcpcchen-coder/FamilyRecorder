@@ -1,3 +1,3 @@
 """FamilyRecorder package."""
 
-__version__ = "0.16.0"
+__version__ = "0.18.0"

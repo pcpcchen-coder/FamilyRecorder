@@ -139,6 +139,7 @@ flowchart LR
     PLC["placement.py"]
     MDL["model_manager.py"]
     CED["config_editor.py"]
+    SCH["schedule.py"]
     CLI["cli.py<br/>唯一進入點"]
 
     CFG --> DEV & AUD & MET & TRN & DIR & SPK & HAL & STO & SUM & PLC & MDL
@@ -156,13 +157,14 @@ flowchart LR
     PLC --> CLI
     MDL --> CLI
     CED --> CLI
+    CED --> SCH --> CLI
 
     classDef base fill:#eceff1,stroke:#546e7a,color:#263238
     classDef mid fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef top fill:#fff3e0,stroke:#e65100,color:#3e2723
     class CFG,DEV,AUD,MET base
     class TRN,DIR,SPK,HAL,CTL,STO mid
-    class LIS,SUM,PLC,MDL,CED,CLI top
+    class LIS,SUM,PLC,MDL,CED,SCH,CLI top
 ```
 
 | 模組 | 行數 | 職責 |
@@ -181,8 +183,9 @@ flowchart LR
 | `summary.py` | 515 | 每日摘要、時間／人別／方向契約、行事曆候選擷取 |
 | `placement.py` | 197 | A/B/C 擺位測試與 CER 報告 |
 | `model_manager.py` | 217 | Whisper 模型清單、下載、續傳、GGML 驗證 |
-| `config_editor.py` | 83 | 保留註解的目標式 YAML 編輯 |
-| `cli.py` | 777 | 全部子指令；選單列 App 只透過這一層操作系統 |
+| `config_editor.py` | 93 | 保留註解的目標式 YAML 編輯 |
+| `schedule.py` | 151 | 原子更新每日摘要時間、重新載入 LaunchAgent，失敗時還原 |
+| `cli.py` | 819 | 全部子指令；選單列 App 只透過這一層操作系統 |
 
 ---
 
@@ -421,9 +424,12 @@ stateDiagram-v2
 ```
 
 - 日期明確但沒有時間 → 全天候選；日期無法解析 → 直接拒絕，不猜。
+- 選用的 `calendar.weekly_review` 由本機驗證星期、來源時段、最低內容量及固定事件時間；
+  它不把自由文字摘要 prompt 當成外部操作規則，並會合併同日的「複習券／複習卷」候選。
 - 預設路徑要求**逐筆確認**；`auto_create` 需要一次明確 opt-in，之後由常駐的選單列程式注意到 `pending` 列並透過 EventKit 寫入。
 - 每則 EventKit 備註都帶有 SQLite 候選 ID，所以狀態更新中斷後可在重試前去重。
-- 擷取失敗或格式錯誤時，**既有的 pending 候選不受影響**，並在 Markdown 摘要中加上明顯警告。
+- 擷取失敗或格式錯誤時，**既有的 pending 候選不受影響**；已啟用且本機條件成立的
+  每週複習卷候選仍會補入，並在 Markdown 摘要中加上明顯警告。
 
 ---
 

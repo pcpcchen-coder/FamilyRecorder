@@ -26,7 +26,7 @@ FamilyRecorder keeps them.
 
 FamilyRecorder is an always-on voice-log system for **Apple Silicon Macs**. It drives an **XVF3800 USB microphone array**, transcribes everything on-device, and produces one readable Markdown summary at a scheduled time each day.
 
-The **[offline history reader](docs/history-reader.en.md)** opens from the menu bar, with separate 200-character briefs and added Google Calendar events, full summaries/transcripts, search and filters. It refreshes after summaries and calendar status updates. No web server or additional AI call is needed.
+The **[offline history reader](docs/history-reader.en.md)** opens from the menu bar, with separate 200-character briefs and added Google Calendar events, full summaries/transcripts, search and filters. The menu also provides an immediately applied daily-summary time picker. No web server or additional AI call is needed.
 
 Three things make it different from a typical cloud recorder:
 
@@ -152,11 +152,12 @@ Solo thinking-out-loud memos, daily-conversation summaries for a relative living
 - Event timeline, per-member highlights, decisions, tasks, key entities
 - A time-output contract is appended in code, so the model never invents timestamps
 - Long transcripts split only on complete segment boundaries, keeping speaker and time attached
+- Optional structured weekly review-sheet rule creates a fixed next-day candidate from a set source window
 
 </td><td width="50%" valign="top">
 
 **🖥️ Native macOS experience**
-- Menu-bar item: status, timed pause, open folders, switch models, summarize now
+- Menu-bar item: status, timed pause, open folders, switch models, configure WAV retention and daily-summary time, summarize now
 - Three per-user LaunchAgents — no root daemons
 - Google Calendar candidates: confirm one by one, or opt in once for automatic creation
 - **One-click uninstall**: remove the program only, or move data to the Trash as well

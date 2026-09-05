@@ -29,6 +29,7 @@ from family_recorder.history import HistoryError, build_history, history_index_p
 from family_recorder.listener import run_listener, validate_runtime_paths
 from family_recorder.model_manager import download_whisper_model, downloadable_models
 from family_recorder.placement import run_placement_test
+from family_recorder.schedule import summary_agent_is_installed, update_summary_schedule
 from family_recorder.speakers import SpeakerProfileStore, create_profile
 from family_recorder.storage import Storage
 from family_recorder.summary import (
@@ -36,6 +37,7 @@ from family_recorder.summary import (
     SummaryError,
     check_codex_login,
     resolve_codex_binary,
+    weekly_review_candidate,
 )
 
 DEFAULT_CONFIG = Path("~/.config/familyrecorder/config.yaml").expanduser()
@@ -77,6 +79,15 @@ def _parser() -> argparse.ArgumentParser:
         "set-summary-model", help="Select a Codex summary model; empty uses the account default"
     )
     summary_model.add_argument("--model", required=True)
+    summary_schedule = commands.add_parser(
+        "set-summary-schedule", help="Set and immediately reload the daily summary time"
+    )
+    summary_schedule.add_argument("--hour", type=int, required=True)
+    summary_schedule.add_argument("--minute", type=int, required=True)
+    audio_retention = commands.add_parser(
+        "set-audio-retention", help="Set the number of days raw WAV audio is kept locally"
+    )
+    audio_retention.add_argument("--days", type=int, required=True)
     summary_prompt = commands.add_parser(
         "set-summary-prompt", help="Set the editable instructions used for ChatGPT summaries"
     )
@@ -193,6 +204,25 @@ def _parser() -> argparse.ArgumentParser:
         help="Automatically create extracted events after one-time user opt-in",
     )
     calendar_auto_create.add_argument("--enabled", choices=("true", "false"), required=True)
+    weekly_review = commands.add_parser(
+        "set-weekly-review-rule",
+        help="Create a fixed weekly review-sheet event from a transcript time window",
+    )
+    weekly_review.add_argument("--enabled", choices=("true", "false"), required=True)
+    weekly_review.add_argument("--source-weekday", type=int)
+    weekly_review.add_argument("--source-start")
+    weekly_review.add_argument("--source-end")
+    weekly_review.add_argument("--event-day-offset", type=int)
+    weekly_review.add_argument("--event-start")
+    weekly_review.add_argument("--event-end")
+    weekly_review.add_argument("--title")
+    weekly_review.add_argument("--member")
+    weekly_review.add_argument("--min-source-chars", type=int)
+    apply_weekly_review = commands.add_parser(
+        "apply-weekly-review-rule",
+        help="Create the configured review candidate from existing local text without an AI call",
+    )
+    apply_weekly_review.add_argument("--date", type=date.fromisoformat, required=True)
     calendar_default = commands.add_parser(
         "set-calendar-default", help="Select the default writable Google Calendar"
     )
@@ -418,6 +448,11 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "downloadable_whisper_models": downloadable_models(config),
         "summary_model": config.summary.model,
         "summary_prompt": config.summary.prompt,
+        "summary_enabled": config.summary.enabled,
+        "summary_hour": config.summary.hour,
+        "summary_minute": config.summary.minute,
+        "summary_schedule_installed": summary_agent_is_installed(),
+        "audio_retention_days": config.storage.keep_audio_days,
         "common_terms": list(config.whisper.common_terms),
         "hallucination_filter": asdict(config.hallucination_filter),
         "hallucination_filter_preset": next(
@@ -436,6 +471,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
         "direction_front_angle_degrees": config.direction.front_angle_degrees,
         "calendar_enabled": config.calendar.enabled,
         "calendar_auto_create": config.calendar.auto_create,
+        "calendar_weekly_review": asdict(config.calendar.weekly_review),
         "calendar_provider": config.calendar.provider,
         "calendar_default_id": config.calendar.default_calendar_id,
         "calendar_default_name": config.calendar.default_calendar_name,
@@ -512,6 +548,29 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "summary", "model", args.model.strip()
             )
             print(f"Summary model: {args.model.strip() or 'ChatGPT account default'}")
+            return 0
+        if args.command == "set-summary-schedule":
+            result = update_summary_schedule(
+                args.config.expanduser().resolve(), args.hour, args.minute
+            )
+            if result.launch_agent_reloaded:
+                print(f"每日摘要時間已更新為 {result.time_label}；排程已重新載入（整理前一天）")
+            else:
+                print(
+                    f"每日摘要時間已儲存為 {result.time_label}；目前未安裝每日摘要排程，"
+                    "下次安裝時會套用"
+                )
+            return 0
+        if args.command == "set-audio-retention":
+            updated_storage = replace(config.storage, keep_audio_days=args.days)
+            validate_config(replace(config, storage=updated_storage))
+            update_yaml_value(
+                args.config.expanduser().resolve(), "storage", "keep_audio_days", args.days
+            )
+            if args.days == 0:
+                print("WAV 保留天數已設為 0；錄音服務重啟後會清理既有 WAV")
+            else:
+                print(f"WAV 保留天數已設為 {args.days} 天；錄音服務重啟後立即套用")
             return 0
         if args.command in {"set-summary-prompt", "reset-summary-prompt"}:
             prompt = (
@@ -643,6 +702,75 @@ def main(argv: list[str] | None = None) -> int:
                 args.config.expanduser().resolve(), "calendar", "auto_create", enabled
             )
             print("摘要後將自動加入行事曆" if enabled else "已恢復逐筆確認模式")
+            return 0
+        if args.command == "set-weekly-review-rule":
+            enabled = args.enabled == "true"
+            if enabled and not config.calendar.enabled:
+                raise ValueError("請先開啟 Google Calendar 候選事件")
+            if enabled and not config.calendar.default_calendar_id:
+                raise ValueError("請先選擇預設 Google Calendar")
+            updates = {
+                name: getattr(args, name)
+                for name in (
+                    "source_weekday",
+                    "source_start",
+                    "source_end",
+                    "event_day_offset",
+                    "event_start",
+                    "event_end",
+                    "title",
+                    "member",
+                    "min_source_chars",
+                )
+                if getattr(args, name) is not None
+            }
+            updated_rule = replace(config.calendar.weekly_review, enabled=enabled, **updates)
+            updated_calendar = replace(config.calendar, weekly_review=updated_rule)
+            validate_config(replace(config, calendar=updated_calendar))
+            config_path = args.config.expanduser().resolve()
+            update_yaml_value(config_path, "calendar", "weekly_review", asdict(updated_rule))
+            if "複習券" in config.summary.prompt:
+                update_yaml_value(
+                    config_path,
+                    "summary",
+                    "prompt",
+                    config.summary.prompt.replace("複習券", "複習卷"),
+                )
+            state = "已開啟" if enabled else "已關閉"
+            print(
+                f"每週複習卷規則{state}：來源星期 {updated_rule.source_weekday} "
+                f"{updated_rule.source_start}–{updated_rule.source_end}，事件於隔 "
+                f"{updated_rule.event_day_offset} 天 {updated_rule.event_start}–"
+                f"{updated_rule.event_end}"
+            )
+            return 0
+        if args.command == "apply-weekly-review-rule":
+            transcript_path = config.storage.data_dir / "transcripts" / f"{args.date}.md"
+            summary_path = config.storage.data_dir / "summaries" / f"{args.date}.md"
+            if not transcript_path.is_file() or not summary_path.is_file():
+                raise ValueError("指定日期必須同時有逐字稿與摘要")
+            candidate = weekly_review_candidate(
+                target_date=args.date,
+                transcript=transcript_path.read_text(encoding="utf-8"),
+                summary=summary_path.read_text(encoding="utf-8"),
+                rule=config.calendar.weekly_review,
+                default_calendar_id=config.calendar.default_calendar_id,
+                member_default_calendar_ids=config.calendar.member_default_calendar_ids,
+            )
+            if candidate is None:
+                raise ValueError("指定日期不符合已設定的每週複習卷規則或內容量不足")
+            with Storage(config.storage) as storage:
+                storage.add_pending_calendar_candidates(args.date, [candidate])
+            try:
+                build_history(config.storage.data_dir)
+            except (OSError, UnicodeError, HistoryError):
+                logging.getLogger(__name__).warning(
+                    "複習卷候選已保存，但閱讀頁更新失敗；稍後會自動重建。"
+                )
+            print(
+                f"已依本機文字保留 {candidate['title']}："
+                f"{str(candidate['starts_at'])[:16]}–{str(candidate['ends_at'])[11:16]}"
+            )
             return 0
         if args.command == "set-calendar-default":
             calendar_id = args.calendar_id.strip()

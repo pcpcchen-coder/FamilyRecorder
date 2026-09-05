@@ -156,6 +156,8 @@ family-recorder --config "$CONFIG" cleanup
 
 Retention affects `audio/` only. Transcripts, summaries, SQLite telemetry, and audit rows are untouched.
 
+You can also use **錄音與儲存 → 更改 WAV 保留天數…** in the menu bar. Saving restarts the listener, so the new cutoff applies immediately and expired WAVs are removed; at most the current 30-second chunk may be interrupted.
+
 ---
 
 ## `speakers`
@@ -204,6 +206,19 @@ See [hardware and capture](hardware.en.md).
 | `calendar_names` | `{}` | Mapping from calendar ID to display name |
 | `member_calendar_ids` | `{}` | The calendars each member may use |
 | `member_default_calendar_ids` | `{}` | Per-member fallback when routing is uncertain. **Must be one of the calendars already assigned to that member** |
+| `weekly_review` | See below | Optional structured weekly review-sheet rule; disabled by default |
+
+`calendar.weekly_review` applies only when `enabled: true`. It selects the day's transcript
+using `source_weekday` (Monday is 0 and Friday is 4) plus `source_start`/`source_end`. Once
+the window reaches `min_source_chars`, the summary produces a tutoring summary and review
+sheet, then creates a fixed candidate `event_day_offset` days later from `event_start` to
+`event_end`. The example defaults use Friday 18:00-22:00 as the tutoring window and create
+“家教複習卷” on Saturday from 11:00-12:00. `member` may be empty; when set, it must name a
+configured household member so that member's default calendar can be used.
+
+These typed fields are deliberately separate from the freely editable `summary.prompt`.
+Only a validated structured rule can produce this fixed event, preventing ordinary summary
+prose from unexpectedly becoming an external action.
 
 FamilyRecorder **stores no Google password or OAuth token**. It writes through the Google account you already added under macOS Internet Accounts and synced in the Calendar app. See [daily summary and calendar](daily-summary.en.md#google-calendar-candidate-events).
 
@@ -218,13 +233,13 @@ FamilyRecorder **stores no Google password or OAuth token**. It writes through t
 | `model` | `""` | Empty means the default Codex model available to the signed-in ChatGPT account. Set a value to pin a model |
 | `codex_binary_path` | `"codex"` | Searches PATH, ChatGPT.app, and common Homebrew locations |
 | `timeout_seconds` | `900` | Maximum wait for each Codex summary run |
-| `hour` / `minute` | `0` / `10` | Daily LaunchAgent time. **Re-run `install_daily_summary.sh` after changing it** |
+| `hour` / `minute` | `0` / `10` | Daily LaunchAgent time. Change and reload it directly from “每日摘要 → 更改每日摘要時間…” in the menu bar |
 | `max_input_chars` | `300000` | Beyond this the transcript is split into parts, then merged and de-duplicated once |
 | `prompt` | Built-in Chinese format | Customize what the summary emphasizes. **Safety rules and the time / speaker / direction contracts are still appended by the code** |
 
 > **Important:** the scheduled run summarizes **yesterday**. To summarize today, use "立即整理今天" (summarize today now) in the menu bar, or run `summary --date $(date +%F)`.
 
-`summary.prompt` can be edited in the menu bar under "更換模型 → ChatGPT 摘要" with a multi-line editor, or restored to the built-in format with one click. Changes apply only to summaries generated or re-run afterwards.
+`summary.prompt` can be edited in the menu bar under "更換模型 → ChatGPT 摘要" with a multi-line editor, or restored to the built-in format with one click. Changes apply only to summaries generated or re-run afterwards. Choose the summary time under “每日摘要 → 更改每日摘要時間…”. Saving updates both YAML and the user LaunchAgent without interrupting recording. If the schedule is not installed, the YAML time is saved for the next installation.
 
 ---
 
@@ -245,7 +260,7 @@ See [hardware and capture → mic placement test](hardware.en.md#mic-placement-t
 |---|---|
 | `audio.*`, `vad.*`, `whisper.*`, `hallucination_filter.*`, `speakers.*`, `direction.*` | **Restart the listener.** Use "重新啟動錄音服務" in the menu bar, or `launchctl kickstart -k "gui/$UID/com.familyrecorder.listener"` |
 | `summary.model`, `summary.prompt` | No restart. Read fresh on every summary run |
-| `summary.hour` / `summary.minute` | **Re-run `./scripts/install_daily_summary.sh`** so the plist is updated |
+| `summary.hour` / `summary.minute` | Menu-bar changes reload the schedule immediately; after a manual YAML edit, re-run `./scripts/install_daily_summary.sh` |
 | `storage.keep_audio_days` | Takes effect at the next retention run, or run `cleanup` now |
 | `calendar.*` | No restart. The menu bar app reads the latest settings |
 

@@ -11,7 +11,11 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from family_recorder.config import AppConfig, SummaryConfig
+from family_recorder.config import (
+    AppConfig,
+    SummaryConfig,
+    WeeklyReviewCalendarRuleConfig,
+)
 from family_recorder.history import HistoryError, build_history
 from family_recorder.storage import Storage
 
@@ -82,6 +86,8 @@ DIRECTION_OUTPUT_CONTRACT = """\
 """
 
 TRANSCRIPT_SEGMENT = re.compile(r"(?m)(?=^### )")
+TRANSCRIPT_TIME_HEADING = re.compile(r"^###\s+(\d{2}):(\d{2})(?::\d{2})?")
+MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 LOGGER = logging.getLogger(__name__)
 
 CALENDAR_CANDIDATE_SCHEMA = {
@@ -125,6 +131,7 @@ def calendar_extraction_instructions(
     members: tuple[str, ...],
     member_calendar_ids: dict[str, tuple[str, ...]],
     calendar_names: dict[str, str],
+    weekly_review: WeeklyReviewCalendarRuleConfig | None = None,
 ) -> str:
     member_text = "、".join(members) if members else "未設定家庭成員"
     route_lines = []
@@ -135,6 +142,19 @@ def calendar_extraction_instructions(
         )
         route_lines.append(f"  - {member}：{labels}")
     route_text = "\n".join(route_lines) if route_lines else "  - 尚未設定成員專屬日曆"
+    weekly_review_text = ""
+    if (
+        weekly_review
+        and weekly_review.enabled
+        and target_date.weekday() == weekly_review.source_weekday
+    ):
+        event_date = target_date + timedelta(days=weekly_review.event_day_offset)
+        weekly_review_text = f"""
+- `{weekly_review.title}` 由 FamilyRecorder 的結構化每週規則另行處理：來源時段是
+  {weekly_review.source_start}–{weekly_review.source_end}，事件固定為
+  {event_date.isoformat()} {weekly_review.event_start}–{weekly_review.event_end}。
+  不要再從摘要中的複習卷／複習券段落產生另一個候選，以免重複。
+"""
     return f"""\
 你是 FamilyRecorder 的 Google Calendar 候選事件擷取器。這是摘要完成後的獨立步驟。
 只輸出符合指定 JSON Schema 的物件；不得輸出 Markdown、HTML comment 或額外解釋。
@@ -153,6 +173,7 @@ def calendar_extraction_instructions(
   且 end 為不包含的次日日期。
 - 每個項目都只是待使用者確認的候選，不得建立或聲稱已建立行事曆事件。
 - `notes` 簡短保留來源日期、約略談話時間及不確定處，不得補造。
+{weekly_review_text}
 """
 
 
@@ -219,7 +240,7 @@ def parse_calendar_candidates(
                 "starts_at": starts_at,
                 "ends_at": ends_at,
                 "all_day": all_day,
-                "notes": str(raw.get("notes", "")).strip()[:1_000],
+                "notes": str(raw.get("notes", "")).strip()[:8_000],
                 "member_name": member,
                 "suggested_calendar_id": requested_calendar_id
                 or member_default_calendar_ids.get(member, default_calendar_id),
@@ -282,6 +303,136 @@ def split_transcript(text: str, max_chars: int) -> list[str]:
     if current:
         parts.append(current)
     return [part for part in parts if part.strip()]
+
+
+def weekly_review_summary_instructions(
+    target_date: date, rule: WeeklyReviewCalendarRuleConfig
+) -> str:
+    if not rule.enabled or target_date.weekday() != rule.source_weekday:
+        return ""
+    event_date = target_date + timedelta(days=rule.event_day_offset)
+    return f"""\
+每週複習卷規則（由使用者在結構化設定中啟用）：
+- 只檢查逐字稿 {rule.source_start}–{rule.source_end} 的內容；若有足夠的實質課程內容，
+  必須新增 `## 家教內容摘要與複習卷`，先整理教學重點，再以 `### 複習卷` 列出
+  可在隔日完成的題目或核對清單。固定使用「複習卷」，不要寫成「複習券」。
+- 複習卷事件由 FamilyRecorder 另行固定為 {event_date.isoformat()}
+  {rule.event_start}–{rule.event_end}，標題為 `{rule.title}`；摘要不要聲稱事件已經建立。
+- 若該時段沒有足夠的實質內容，明確寫出沒有產生複習卷，不得補造題目。
+"""
+
+
+def transcript_window_content(transcript: str, start: str, end: str) -> str:
+    """Return complete transcript segments whose local start time is in the window."""
+    start_minutes = int(start[:2]) * 60 + int(start[3:])
+    end_minutes = int(end[:2]) * 60 + int(end[3:])
+    selected: list[str] = []
+    for segment in TRANSCRIPT_SEGMENT.split(transcript):
+        if not segment.startswith("### "):
+            continue
+        match = TRANSCRIPT_TIME_HEADING.match(segment)
+        if not match:
+            continue
+        segment_minutes = int(match.group(1)) * 60 + int(match.group(2))
+        if start_minutes <= segment_minutes < end_minutes:
+            selected.append(segment.strip())
+    return "\n\n".join(selected)
+
+
+def extract_weekly_review_section(summary: str) -> str:
+    lines = summary.splitlines()
+    chosen_index: int | None = None
+    chosen_level = 0
+    for index, line in enumerate(lines):
+        match = MARKDOWN_HEADING.match(line)
+        if not match:
+            continue
+        heading = match.group(2)
+        if "家教" in heading and ("摘要" in heading or "複習" in heading):
+            chosen_index = index
+            chosen_level = len(match.group(1))
+            break
+    if chosen_index is None:
+        for index, line in enumerate(lines):
+            match = MARKDOWN_HEADING.match(line)
+            if match and ("複習卷" in match.group(2) or "複習券" in match.group(2)):
+                chosen_index = index
+                chosen_level = len(match.group(1))
+                break
+    if chosen_index is None:
+        return ""
+    end_index = len(lines)
+    for index in range(chosen_index + 1, len(lines)):
+        match = MARKDOWN_HEADING.match(lines[index])
+        if match and len(match.group(1)) <= chosen_level:
+            end_index = index
+            break
+    return "\n".join(lines[chosen_index:end_index]).strip()
+
+
+def weekly_review_candidate(
+    *,
+    target_date: date,
+    transcript: str,
+    summary: str,
+    rule: WeeklyReviewCalendarRuleConfig,
+    default_calendar_id: str,
+    member_default_calendar_ids: dict[str, str],
+) -> dict[str, object] | None:
+    if not rule.enabled or target_date.weekday() != rule.source_weekday:
+        return None
+    source = transcript_window_content(transcript, rule.source_start, rule.source_end)
+    source_body = "\n".join(line for line in source.splitlines() if not line.startswith("### "))
+    source_chars = len(re.sub(r"\s+", "", source_body))
+    if source_chars < rule.min_source_chars:
+        return None
+
+    event_date = target_date + timedelta(days=rule.event_day_offset)
+    starts_at = datetime.fromisoformat(
+        f"{event_date.isoformat()}T{rule.event_start}:00"
+    ).astimezone()
+    ends_at = datetime.fromisoformat(f"{event_date.isoformat()}T{rule.event_end}:00").astimezone()
+    review_section = extract_weekly_review_section(summary)
+    if not review_section:
+        review_section = summary.strip()
+    notes = (
+        f"FamilyRecorder 每週複習卷；來源：{target_date.isoformat()} "
+        f"約 {rule.source_start}–{rule.source_end}。\n\n{review_section}"
+    )[:8_000]
+    return {
+        "title": rule.title,
+        "starts_at": starts_at.isoformat(),
+        "ends_at": ends_at.isoformat(),
+        "all_day": False,
+        "notes": notes,
+        "member_name": rule.member,
+        "suggested_calendar_id": member_default_calendar_ids.get(rule.member, default_calendar_id),
+    }
+
+
+def merge_weekly_review_candidate(
+    candidates: list[dict[str, object]], review: dict[str, object] | None
+) -> list[dict[str, object]]:
+    if review is None:
+        return candidates
+    review_date = str(review["starts_at"])[:10]
+    merged: list[dict[str, object]] = []
+    inserted = False
+    for candidate in candidates:
+        title = str(candidate.get("title", ""))
+        starts_at = str(candidate.get("starts_at", ""))
+        is_review = starts_at[:10] == review_date and ("複習卷" in title or "複習券" in title)
+        if is_review:
+            if not inserted:
+                merged.append(review)
+                inserted = True
+            continue
+        merged.append(candidate)
+    if not inserted:
+        if len(merged) >= 20:
+            merged = merged[:19]
+        merged.append(review)
+    return merged
 
 
 def resolve_codex_binary(configured: str) -> Path:
@@ -409,6 +560,7 @@ class DailySummaryRunner:
             self.config.speakers.members,
             self.config.calendar.member_calendar_ids,
             self.config.calendar.calendar_names,
+            self.config.calendar.weekly_review,
         )
         source = f"已完成摘要：\n{summary.strip()}\n\n原始逐字稿：\n{transcript.strip()}"
         if len(source) > self.config.summary.max_input_chars:
@@ -449,28 +601,42 @@ class DailySummaryRunner:
             if not transcript:
                 raise SummaryError(f"Transcript for {target_date.isoformat()} is empty")
 
+            summary_instructions = self.config.summary.prompt
+            review_instructions = weekly_review_summary_instructions(
+                target_date, self.config.calendar.weekly_review
+            )
+            if review_instructions:
+                summary_instructions = f"{summary_instructions.strip()}\n\n{review_instructions}"
             parts = split_transcript(transcript, self.config.summary.max_input_chars)
             if len(parts) == 1:
                 summary = self._request(
-                    self.config.summary.prompt,
+                    summary_instructions,
                     f"日期：{target_date.isoformat()}\n\n逐字稿：\n{parts[0]}",
                 )
             else:
                 partials = [
                     self._request(
-                        self.config.summary.prompt
+                        summary_instructions
                         + "\n這是分段逐字稿。先整理這一段，保留不確定性，不要補造。",
                         f"日期：{target_date.isoformat()}；第 {index}/{len(parts)} 段\n\n{part}",
                     )
                     for index, part in enumerate(parts, start=1)
                 ]
                 summary = self._request(
-                    self.config.summary.prompt
+                    summary_instructions
                     + "\n以下是同一天各段的中間整理，請去重並整合成一份最終摘要。",
                     "\n\n--- 分段整理 ---\n\n".join(partials),
                 )
 
             if self.config.calendar.enabled:
+                review_candidate = weekly_review_candidate(
+                    target_date=target_date,
+                    transcript=transcript,
+                    summary=summary,
+                    rule=self.config.calendar.weekly_review,
+                    default_calendar_id=self.config.calendar.default_calendar_id,
+                    member_default_calendar_ids=(self.config.calendar.member_default_calendar_ids),
+                )
                 try:
                     calendar_candidates = self._request_calendar_candidates(
                         target_date=target_date,
@@ -482,11 +648,22 @@ class DailySummaryRunner:
                         "Calendar candidate extraction failed; preserving pending candidates: %s",
                         exc,
                     )
-                    summary += (
-                        "\n\n> ⚠️ FamilyRecorder 本次無法整理 Google Calendar 候選事件；"
-                        "既有待確認項目未變更，請稍後重新執行摘要。"
-                    )
+                    if review_candidate:
+                        storage.add_pending_calendar_candidates(target_date, [review_candidate])
+                        summary += (
+                            "\n\n> ⚠️ FamilyRecorder 本次無法整理一般 Google Calendar "
+                            "候選事件；既有待確認項目未變更。已依每週規則保留 1 個"
+                            "家教複習卷事件。"
+                        )
+                    else:
+                        summary += (
+                            "\n\n> ⚠️ FamilyRecorder 本次無法整理 Google Calendar 候選事件；"
+                            "既有待確認項目未變更，請稍後重新執行摘要。"
+                        )
                 else:
+                    calendar_candidates = merge_weekly_review_candidate(
+                        calendar_candidates, review_candidate
+                    )
                     storage.replace_pending_calendar_candidates(target_date, calendar_candidates)
                     if calendar_candidates:
                         if self.config.calendar.auto_create:

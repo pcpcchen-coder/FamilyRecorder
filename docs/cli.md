@@ -82,6 +82,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 |---|---|
 | `summary` | 整理 Mac 本地日期的**昨天**，與每日排程相同 |
 | `summary --date YYYY-MM-DD` | 整理指定日期 |
+| `set-summary-schedule --hour H --minute M` | 設定每日摘要時間；已安裝排程時立即安全地重新載入，失敗會還原設定 |
 | `build-history` | 更新離線 `history/index.html` 與日期頁，輸出首頁路徑；不呼叫 AI、不更動來源檔案 |
 
 ```bash
@@ -194,6 +195,8 @@ FR="$RUNTIME/venv/bin/family-recorder"
 |---|---|
 | `set-calendar-enabled --enabled {true,false}` | 開關候選事件擷取 |
 | `set-calendar-auto-create --enabled {true,false}` | 一次同意後自動建立事件 |
+| `set-weekly-review-rule --enabled {true,false} [...]` | 設定固定來源時段與隔日複習卷事件 |
+| `apply-weekly-review-rule --date YYYY-MM-DD` | 純本機套用規則到既有逐字稿與摘要，不呼叫 AI |
 | `set-calendar-default --calendar-id ID --calendar-name NAME` | 設定全家預設日曆 |
 | `set-member-calendar --member M --calendar-id ID --enabled {true,false}` | 為一位成員綁定／解除綁定日曆 |
 | `set-member-calendar-default --member M --calendar-id ID` | 指定該成員的回退日曆 |
@@ -205,6 +208,11 @@ FR="$RUNTIME/venv/bin/family-recorder"
   --calendar-id "abc@group.calendar.google.com" --calendar-name "家庭"
 "$FR" --config "$CONFIG" set-member-calendar \
   --member "家人二" --calendar-id "xyz@gmail.com" --calendar-name "個人" --enabled true
+"$FR" --config "$CONFIG" set-weekly-review-rule --enabled true \
+  --source-weekday 4 --source-start 18:00 --source-end 22:00 \
+  --event-day-offset 1 --event-start 11:00 --event-end 12:00 \
+  --title "家教複習卷" --member "家人二"
+"$FR" --config "$CONFIG" apply-weekly-review-rule --date 2026-09-04
 "$FR" --config "$CONFIG" dismiss-calendar-event --id 42
 ```
 
@@ -223,11 +231,13 @@ select id, title, starts_at, member_name from calendar_candidates where status='
 | 指令 | 說明 |
 |---|---|
 | `placement-test --positions A B C` | 比較多個麥克風位置 |
+| `set-audio-retention --days N` | 儲存本機 WAV 保留天數；listener 重啟後套用 |
 | `cleanup` | 立即套用設定的原始音訊 retention |
 
 ```bash
 "$FR" --config "$CONFIG" placement-test --positions "茶几中央" "櫃子上" "Mac旁"
 "$FR" --config "$CONFIG" placement-test --positions A B --seconds 10 --sentences-file ./s.txt
+"$FR" --config "$CONFIG" set-audio-retention --days 14
 "$FR" --config "$CONFIG" cleanup
 ```
 

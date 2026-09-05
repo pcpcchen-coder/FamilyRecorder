@@ -33,6 +33,7 @@ DMG_PATH="$DIST_ROOT/FamilyRecorder-$VERSION-arm64.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 trap 'rm -rf "$BUILD_ROOT"' EXIT
+mkdir -p "$REPO_ROOT/build"
 rm -rf "$REPO_ROOT/build/lib"
 find "$REPO_ROOT/build" -maxdepth 1 -type d -name 'bdist.*' -exec rm -rf {} +
 mkdir -p \
