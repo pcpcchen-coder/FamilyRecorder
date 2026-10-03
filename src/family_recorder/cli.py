@@ -10,9 +10,10 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import asdict, fields, replace
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
+from family_recorder.capture_watchdog import capture_timeout_seconds
 from family_recorder.config import (
     DEFAULT_SUMMARY_PROMPT,
     HALLUCINATION_FILTER_PRESETS,
@@ -381,6 +382,7 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
     data_dir = config.storage.data_dir
     profile_store = SpeakerProfileStore(data_dir)
     with Storage(config.storage) as storage:
+        last_capture = storage.latest_capture_time()
         hallucination_stats = storage.hallucination_filter_stats(today)
         pending_calendar_events = [
             {
@@ -396,11 +398,29 @@ def _menu_status(config: AppConfig, config_path: Path) -> dict[str, object]:
             }
             for candidate in storage.pending_calendar_candidates()
         ]
+    listener_running = _listener_is_running()
+    capture_age = (
+        (datetime.now().astimezone() - last_capture.astimezone()).total_seconds()
+        if last_capture is not None
+        else None
+    )
+    recording_healthy = (
+        listener_running
+        and not pause_state.paused
+        and capture_age is not None
+        and 0 <= capture_age < capture_timeout_seconds(config.audio.chunk_seconds)
+    )
+    pause_label = pause_state.label
+    if listener_running and not pause_state.paused and not recording_healthy:
+        pause_label = "⚠️ 尚未收到新的音訊，正在連接麥克風"
     return {
         "paused": pause_state.paused,
-        "pause_label": pause_state.label,
+        "pause_label": pause_label,
         "pause_until": pause_state.until.isoformat() if pause_state.until else None,
-        "listener_running": _listener_is_running(),
+        "listener_running": listener_running,
+        "recording_healthy": recording_healthy,
+        "last_capture_at": last_capture.isoformat() if last_capture else None,
+        "capture_age_seconds": capture_age,
         "config_path": str(config_path.expanduser().resolve()),
         "data_dir": str(data_dir),
         "transcript_dir": str(data_dir / "transcripts"),

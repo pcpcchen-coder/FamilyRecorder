@@ -18,6 +18,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 
 **硬體與收音**
 [找不到 XVF3800](#找不到-xvf3800) ·
+[拔插麥克風後沒有恢復錄音](#拔插麥克風後沒有恢復錄音) ·
 [Invalid sample rate](#invalid-sample-rate) ·
 [Beamforming 診斷不是 OK](#beamforming-診斷不是-ok) ·
 [一直被 VAD 略過](#一直被-vad-略過) ·
@@ -67,6 +68,30 @@ audio:
   # 或
   device_name_contains: "XMOS XVF3800 Voice Processor"
 ```
+
+---
+
+### 拔插麥克風後沒有恢復錄音
+
+拔插麥克風或更換 USB 集線器時，macOS 可能移除原本的音訊裝置。PortAudio 的讀取有時會一直等待，或持續使用啟動時的舊裝置清單；即使程序仍在執行，也不代表正在收音。
+
+✅ listener 會用獨立監督執行緒檢查完整收音是否持續完成。逾時為 **90 秒或 `audio.chunk_seconds` 的三倍，取較大值**。超過期限時，以狀態碼 `75` 結束程序，讓已安裝的 LaunchAgent 自動重新啟動並重新列舉麥克風。持續找不到裝置時也會重試；插回後仍須等待重新啟動及第一段收音完成。
+
+- 正常收到安靜音訊也會更新收音狀態，不需要有人說話。
+- 手動暫停期間不會觸發逾時；`listen --once` 等待逐字稿時也不計入收音逾時。
+- 選單依最近一次完整收音顯示狀態；超過期限會顯示「尚未收到新的音訊，正在連接麥克風」。
+- 直接在終端執行的 listener 沒有 LaunchAgent 代為重啟，逾時退出後需自行再次啟動。
+
+檢查最近的完整收音及重啟原因：
+
+```bash
+sqlite3 "$DB" "select started_at, ended_at from captures order by id desc limit 5;"
+"$FR" --config "$CONFIG" menu-status
+```
+
+`menu-status` 的 `recording_healthy`、`last_capture_at`、`capture_age_seconds` 可用於診斷；`listener_running` 仍只表示程序是否執行。`listener.error.log` 中的 `No completed audio capture` 訊息會記錄卡住階段及程序編號。
+
+⚠️ 麥克風未連線時無法收音，中斷期間沒有錄到的內容無法補回。若持續重新啟動，先確認裝置已接回且麥克風權限仍有效。
 
 ---
 

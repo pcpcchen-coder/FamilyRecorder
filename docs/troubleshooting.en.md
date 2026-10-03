@@ -18,6 +18,7 @@ FR="$RUNTIME/venv/bin/family-recorder"
 
 **Hardware and capture**
 [The XVF3800 is not found](#the-xvf3800-is-not-found) ·
+[Recording does not resume after reconnecting the microphone](#recording-does-not-resume-after-reconnecting-the-microphone) ·
 [Invalid sample rate](#invalid-sample-rate) ·
 [Beamforming diagnosis is not OK](#beamforming-diagnosis-is-not-ok) ·
 [Everything keeps getting skipped by VAD](#everything-keeps-getting-skipped-by-vad) ·
@@ -67,6 +68,30 @@ audio:
   # or
   device_name_contains: "XMOS XVF3800 Voice Processor"
 ```
+
+---
+
+### Recording does not resume after reconnecting the microphone
+
+Unplugging the microphone or changing USB hubs can remove the original macOS audio device. PortAudio may then wait indefinitely for audio or keep using the device list from startup. A running process alone does not establish that capture is working.
+
+✅ An independent listener watchdog checks that complete audio chunks keep arriving. Its timeout is **90 seconds or three times `audio.chunk_seconds`, whichever is greater**. On expiry, the process exits with status `75` so the installed LaunchAgent restarts it with a fresh microphone device list. Missing devices are retried too; after reconnecting, allow time for a restart and the first complete capture.
+
+- Successfully captured silence renews the deadline; speech is not required.
+- An intentional pause disables the deadline. Waiting for transcription in `listen --once` is also excluded.
+- The menu uses the latest complete capture to report health. Stale capture shows “尚未收到新的音訊，正在連接麥克風” (No new audio yet; connecting to the microphone).
+- A listener started directly in a terminal has no LaunchAgent to restart it. Start it again after a timeout exit.
+
+Inspect the latest complete captures and restart reason:
+
+```bash
+sqlite3 "$DB" "select started_at, ended_at from captures order by id desc limit 5;"
+"$FR" --config "$CONFIG" menu-status
+```
+
+The `menu-status` fields `recording_healthy`, `last_capture_at`, and `capture_age_seconds` expose capture health; `listener_running` still reports process state only. A `No completed audio capture` entry in `listener.error.log` includes the stalled stage and process ID.
+
+⚠️ No audio can be captured while the microphone is disconnected, and missed audio cannot be recovered. If restarts continue, confirm that the device is connected and microphone permission is still granted.
 
 ---
 
