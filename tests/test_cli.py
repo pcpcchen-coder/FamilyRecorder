@@ -1,7 +1,26 @@
+from datetime import datetime, timedelta
+
+import pytest
+
 from family_recorder import cli
-from family_recorder.config import AppConfig, AudioConfig, load_config
+from family_recorder.audio import AudioChunk
+from family_recorder.config import (
+    AppConfig,
+    AudioConfig,
+    DirectionConfig,
+    StorageConfig,
+    load_config,
+)
+from family_recorder.control import pause_recording
 from family_recorder.devices import AudioDevice
-from family_recorder.direction import OutputRoute
+from family_recorder.direction import (
+    AcousticCapture,
+    OutputRoute,
+    summarize_direction,
+    summarize_speech_energy,
+)
+from family_recorder.metrics import AudioAnalysis
+from family_recorder.storage import Storage
 
 
 class FakeRoutingReader:
@@ -99,3 +118,46 @@ def test_cli_applies_named_hallucination_preset(tmp_path) -> None:
     assert result == 0
     assert config.hallucination_filter.min_avg_logprob == -0.60
     assert config.hallucination_filter.repeat_window_seconds == 600
+
+
+@pytest.mark.parametrize(
+    ("age", "running", "paused", "healthy"),
+    [
+        (10, True, False, True),
+        (300, True, False, False),
+        (None, True, False, False),
+        (10, False, False, False),
+        (10, True, True, False),
+    ],
+)
+def test_menu_status_requires_fresh_captures_even_when_process_is_alive(
+    tmp_path, monkeypatch, age, running, paused, healthy
+) -> None:
+    config = AppConfig(storage=StorageConfig(data_dir=tmp_path))
+    monkeypatch.setattr(cli, "_listener_is_running", lambda: running)
+    with Storage(config.storage) as storage:
+        assert storage.latest_capture_time() is None
+        if age is not None:
+            ended = datetime.now().astimezone() - timedelta(seconds=age)
+            storage.save_capture(
+                AudioChunk(b"", 16_000, ended - timedelta(seconds=30), ended),
+                AudioAnalysis(False, -80, None, 0, 100),
+                AcousticCapture(
+                    summarize_direction([], DirectionConfig()),
+                    summarize_speech_energy([], DirectionConfig()),
+                    (),
+                ),
+                combined_keep=False,
+                gate_reason="silence",
+                audio_path=None,
+            )
+            assert storage.latest_capture_time() == ended
+    if paused:
+        pause_recording(tmp_path)
+    status = cli._menu_status(config, tmp_path / "config.yaml")
+    assert status["listener_running"] is running
+    assert status["recording_healthy"] is healthy
+    if running and not paused:
+        assert (status["pause_label"] == "錄音中") is healthy
+    if paused:
+        assert status["pause_label"] == "已暫停，直到手動恢復"

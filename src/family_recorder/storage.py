@@ -227,6 +227,12 @@ class Storage:
     def summary_path_for(self, target_date: date) -> Path:
         return self.summary_dir / f"{target_date.isoformat()}.md"
 
+    def latest_capture_time(self) -> datetime | None:
+        row = self.connection.execute(
+            "SELECT ended_at FROM captures ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
     def save_capture(
         self,
         chunk: AudioChunk,

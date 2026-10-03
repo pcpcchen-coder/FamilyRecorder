@@ -15,6 +15,7 @@ from family_recorder.audio import (
     slice_pcm16,
     write_wav,
 )
+from family_recorder.capture_watchdog import CaptureWatchdog, capture_timeout_seconds
 from family_recorder.config import AppConfig
 from family_recorder.control import ControlStateError, read_pause_state
 from family_recorder.direction import (
@@ -281,7 +282,9 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
             max_workers=1,
             thread_name_prefix="familyrecorder-whisper",
         ) as transcription_pool,
+        CaptureWatchdog(capture_timeout_seconds(config.audio.chunk_seconds)) as watchdog,
     ):
+        LOGGER.info("Capture watchdog enabled (timeout %.0f seconds)", watchdog.timeout_seconds)
         cleanup = storage.cleanup_audio()
         if cleanup.removed_files:
             LOGGER.info(
@@ -309,6 +312,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                 LOGGER.error("%s; ignoring pause state", exc)
                 pause_state = None
             if pause_state is not None and pause_state.paused:
+                watchdog.suspend()
                 if not pause_was_logged:
                     LOGGER.info("%s", pause_state.label)
                     pause_was_logged = True
@@ -320,6 +324,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                 LOGGER.info("Recording resumed")
                 pause_was_logged = False
             try:
+                watchdog.arm("opening microphone")
                 with recorder.open_stream() as stream:
                     assert recorder.device is not None
                     LOGGER.info(
@@ -330,6 +335,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                         config.audio.sample_rate,
                     )
                     while True:
+                        watchdog.arm("reading audio")
                         direction_sampler = DirectionSampler(config.direction)
                         direction_sampler.start()
                         try:
@@ -345,6 +351,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             pause_was_logged = True
                             break
                         processed += 1
+                        watchdog.arm("processing capture")
                         direction = acoustic.direction
                         speech_energy = acoustic.speech_energy
                         analysis = analyze_audio(chunk.pcm16_mono, chunk.sample_rate, config.vad)
@@ -420,6 +427,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                             gate_reason=gate.reason,
                             audio_path=audio_path,
                         )
+                        watchdog.progress()
                         if not gate.keep:
                             LOGGER.info("Chunk skipped by gate: %s", gate.reason)
                             if once:
@@ -455,6 +463,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                         if processed % 120 == 0:
                             storage.cleanup_audio()
                         if once:
+                            watchdog.suspend()
                             transcription.result()
                             return
             except KeyboardInterrupt:
@@ -468,6 +477,7 @@ def run_listener(config: AppConfig, once: bool = False) -> None:
                     exc,
                     config.audio.retry_seconds,
                 )
+                watchdog.arm("waiting to reconnect microphone")
                 time.sleep(config.audio.retry_seconds)
 
 
